@@ -15,6 +15,9 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
+#include "tcrt5000.h"
+#include "mpu9250.h"
+
 static const char *TAG = "NIMBLE_CLIENT";
 
 #define SVC_UUID_16 0x1000
@@ -53,15 +56,29 @@ static void parse_adv_name(const uint8_t *data, uint8_t length_data,
 
 static void start_scan(void);
 
-static void send_sample_frame(void)
+static void send_frame(int accel_x, int accel_y, int accel_z, int ir_detected, float temp)
 {
-    const char *frame = "12345,25.5,10,-3,1000,1,3.7\n";
-    int rc = ble_gattc_write_flat(conn_handle,
-                                  INPUT_CHAR_HANDLE, // <- handle z nRF Connect
-                                  frame,
-                                  strlen(frame),
-                                  NULL, NULL);
-    ESP_LOGI("CLIENT", "write INPUT rc=%d", rc);
+    char frame[128];
+    int len = snprintf(frame, sizeof(frame),
+                       "%d,%d,%d,%d,%.1f\n",
+                       accel_x, accel_y, accel_z, ir_detected, temp);
+
+    if (len < 0 || len >= sizeof(frame))
+    {
+        ESP_LOGE("CLIENT", "Frame too long!");
+        return;
+    }
+
+    if (conn_handle != BLE_HS_CONN_HANDLE_NONE)
+    {
+        int rc = ble_gattc_write_flat(conn_handle, INPUT_CHAR_HANDLE,
+                                      frame, len, NULL, NULL);
+        ESP_LOGI("CLIENT", "Sent: %s (rc=%d)", frame, rc);
+    }
+    else
+    {
+        ESP_LOGW("CLIENT", "No connection, frame skipped");
+    }
 }
 
 static int gap_event(struct ble_gap_event *event, void *arg)
@@ -73,9 +90,6 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         {
             conn_handle = event->connect.conn_handle;
             ESP_LOGI("CLIENT", "Connected, conn=%d", conn_handle);
-
-            // tu po connect wywołujesz wysyłkę
-            send_sample_frame();
         }
         else
         {
@@ -175,12 +189,13 @@ static void host_task(void *param)
 
 void app_main(void)
 {
-    esp_err_t ret;
 
-    ret = nvs_flash_init();
+    esp_err_t ret = nvs_flash_init();
     if (ret != ESP_OK)
+    {
         ESP_LOGE(TAG, "nvs_flash_init failed: %d", ret);
-
+        return;
+    }
     nimble_port_init();
 
     ble_svc_gap_init();
@@ -192,9 +207,41 @@ void app_main(void)
 
     ESP_LOGI(TAG, "NimBLE client started");
 
+    ret = mpu9250_init();
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "mpu9250_init failed: %d", ret);
+        // return;
+    }
+
+    ret = tcrt5000_init();
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "tcrt5000_init failed: %d", ret);
+        // return;
+    }
+    ESP_LOGI(TAG, "Sensors initialized");
+
+    mpu9250_accel_t accel;
     while (1)
     {
-        send_sample_frame();
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        int ir_detected = tcrt5000_read(); // 0 - wykryto, 1 - nie wykryto
+
+        if (ESP_OK == read_accelerometer(&accel))
+        {
+            ESP_LOGI(TAG, "Accel X: %d, Y: %d, Z: %d",
+                     accel.accel_x, accel.accel_y, accel.accel_z);
+        }
+        read_accelerometer(&accel); // Odczytaj dane akcelerometru
+        int16_t accel_x = accel.accel_x;
+        int16_t accel_y = accel.accel_y;
+        int16_t accel_z = accel.accel_z;
+
+        float temp = 25.5 + (rand() % 20) / 10.0; // 25.5-35.5°C
+
+        // WYŚLIJ RAMKĘ
+        send_frame(accel_x, accel_y, accel_z, ir_detected, temp);
+
+        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }

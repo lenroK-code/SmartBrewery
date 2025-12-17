@@ -4,7 +4,7 @@
 #include "driver/gpio.h"
 
 #define TCRT5000_PIN GPIO_NUM_10  // Zmień na pin, do którego podłączony jest TCRT5000
-static const char *TAG = "TCRT5000_DIGITAL";
+static const char *TAG = "TCRT5000";
 
 void app_main(void)
 {
