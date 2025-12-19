@@ -214,7 +214,6 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             start_advertising();
         }
         return ESP_OK;
-
     case BLE_GAP_EVENT_DISCONNECT:
         active_conns--;
         if (active_conns < 0)

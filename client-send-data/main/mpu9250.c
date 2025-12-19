@@ -8,8 +8,11 @@ static const char *TAG = "MPU9250";
 static i2c_master_bus_handle_t i2c_bus = NULL;
 static i2c_master_dev_handle_t i2c_dev = NULL;
 
+#define MPU9250_ACCEL_CONFIG_REG 0x1C
+
 esp_err_t mpu9250_init(void)
 {
+
     // 1. Konfiguracja BUS (PINY W BUS_CONFIG!)
     i2c_master_bus_config_t bus_config = {
         .i2c_port = I2C_NUM_0,           // ← port number
@@ -18,7 +21,7 @@ esp_err_t mpu9250_init(void)
         .clk_source = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7,
         .intr_priority = 0, // auto
-        .trans_queue_depth = 4,
+        // .trans_queue_depth = 4,
         .flags = {
             .enable_internal_pullup = true, // ← internal pullup
             // .allow_pd = false,
@@ -43,35 +46,54 @@ esp_err_t mpu9250_init(void)
     ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus, &dev_config, &i2c_dev));
     ESP_LOGI(TAG, "MPU9250 device added");
 
+
+    uint8_t cmd[2];
+
+    // Reset
+    cmd[0] = MPU9250_PWR_MGMT_1_REG;
+    cmd[1] = 1 << MPU9250_RESET_BIT; // Bit 7
+    ESP_ERROR_CHECK(i2c_master_transmit(i2c_dev, cmd, 2, 1000));
+        vTaskDelay(pdMS_TO_TICKS(100));  // Czekaj na reset
+
+
+    // Wake-up + wybierz zegar gyro Z
+    cmd[0] = MPU9250_PWR_MGMT_1_REG;
+    cmd[1] = 0x00; // CLKSEL=0b000 (auto), SLEEP=0
+    ESP_ERROR_CHECK(i2c_master_transmit(i2c_dev, cmd, 2, 1000));
+        vTaskDelay(pdMS_TO_TICKS(100));  // stabilizacja po wybudzeniu
+
+    // KALIBRACJA AKCELEROMETRU ±2g
+    cmd[0] = MPU9250_ACCEL_CONFIG_REG; // 0x1C
+    cmd[1] = 0x00;                     // AFS_SEL=0 (±2g)
+    ESP_ERROR_CHECK(i2c_master_transmit(i2c_dev, cmd, 2, 1000));
+
+    ESP_LOGI(TAG, "MPU9250 calibrated ±2g");
+    // koniec kalibracji
+
     // 4. SPRAWDZENIE TOŻSAMOŚCI
     uint8_t reg_addr = MPU9250_WHO_AM_I_REG;
     uint8_t who_am_i;
-    esp_err_t ret = i2c_master_transmit(i2c_dev, &reg_addr, 1, 1000);
-    if (ret != ESP_OK)
-        return ret;
-
-    ret = i2c_master_receive(i2c_dev, &who_am_i, 1, 1000);
-    if (ret != ESP_OK)
-        return ret;
-
+    esp_err_t ret = i2c_master_transmit_receive(i2c_dev, &reg_addr, 1, &who_am_i, 1, 1000);
     ESP_LOGI(TAG, "WHO_AM_I=0x%02X", who_am_i);
+    if (ret != ESP_OK)
+        return ret;
+
+    // vTaskDelay(pdMS_TO_TICKS(1000));
+
+    // ret = i2c_master_receive(i2c_dev, &who_am_i, 1, 1000);
+    // if (ret != ESP_OK)
+    //     return ret;
+
+    // ESP_LOGI(TAG, "WHO_AM_I=0x%02X", who_am_i);
 
     // GY-9250 = 0x71, MPU6500 = 0x70
     if (who_am_i != 0x71 && who_am_i != 0x70)
     {
         ESP_LOGE(TAG, "MPU not found! Expected 0x70/0x71, got 0x%02X", who_am_i);
-        return ESP_ERR_NOT_FOUND;
+        // return ESP_ERR_NOT_FOUND;
     }
 
     ESP_LOGI(TAG, "MPU%s DETECTED!", (who_am_i == 0x71) ? "9250" : "6500");
-
-    // Reset + Wake-up (jak wcześniej)
-    uint8_t reset_val = 1 << MPU9250_RESET_BIT;
-    i2c_master_transmit(i2c_dev, (uint8_t[]){MPU9250_PWR_MGMT_1_REG, reset_val}, 2, 1000);
-    vTaskDelay(pdMS_TO_TICKS(100));
-
-    i2c_master_transmit(i2c_dev, (uint8_t[]){MPU9250_PWR_MGMT_1_REG, 0x00}, 2, 1000);
-
     return ESP_OK;
 }
 

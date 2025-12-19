@@ -17,6 +17,7 @@
 
 #include "tcrt5000.h"
 #include "mpu9250.h"
+#include "ds18b20-sensor.h"
 
 static const char *TAG = "NIMBLE_CLIENT";
 
@@ -71,9 +72,9 @@ static void send_frame(int accel_x, int accel_y, int accel_z, int ir_detected, f
 
     if (conn_handle != BLE_HS_CONN_HANDLE_NONE)
     {
-        int rc = ble_gattc_write_flat(conn_handle, INPUT_CHAR_HANDLE,
-                                      frame, len, NULL, NULL);
-        ESP_LOGI("CLIENT", "Sent: %s (rc=%d)", frame, rc);
+        ble_gattc_write_flat(conn_handle, INPUT_CHAR_HANDLE,
+                             frame, len, NULL, NULL);
+        ESP_LOGI("CLIENT", "Sent: %s", frame);
     }
     else
     {
@@ -90,6 +91,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         {
             conn_handle = event->connect.conn_handle;
             ESP_LOGI("CLIENT", "Connected, conn=%d", conn_handle);
+            ble_gattc_exchange_mtu(conn_handle, NULL, NULL);
         }
         else
         {
@@ -139,7 +141,6 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         }
         return 0;
     }
-
     case BLE_GAP_EVENT_DISC_COMPLETE:
         ESP_LOGI(TAG, "Scan complete");
         return 0;
@@ -190,12 +191,12 @@ static void host_task(void *param)
 void app_main(void)
 {
 
-    esp_err_t ret = nvs_flash_init();
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(TAG, "nvs_flash_init failed: %d", ret);
-        return;
+     esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
     }
+    ESP_ERROR_CHECK(ret);
     nimble_port_init();
 
     ble_svc_gap_init();
@@ -214,10 +215,17 @@ void app_main(void)
         // return;
     }
 
-    ret = tcrt5000_init();
+    tcrt5000_init();
     if (ret != ESP_OK)
     {
         ESP_LOGE(TAG, "tcrt5000_init failed: %d", ret);
+        // return;
+    }
+
+    ret = temp_init();
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "temp_init failed: %d", ret);
         // return;
     }
     ESP_LOGI(TAG, "Sensors initialized");
@@ -225,7 +233,8 @@ void app_main(void)
     mpu9250_accel_t accel;
     while (1)
     {
-        int ir_detected = tcrt5000_read(); // 0 - wykryto, 1 - nie wykryto
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        int ir_detected = tcrt5000_read(); // 1 - wykryto, 0 - nie wykryto wody w zbiorniku
 
         if (ESP_OK == read_accelerometer(&accel))
         {
@@ -237,11 +246,9 @@ void app_main(void)
         int16_t accel_y = accel.accel_y;
         int16_t accel_z = accel.accel_z;
 
-        float temp = 25.5 + (rand() % 20) / 10.0; // 25.5-35.5°C
+        float temp = temp_read();
 
         // WYŚLIJ RAMKĘ
         send_frame(accel_x, accel_y, accel_z, ir_detected, temp);
-
-        vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
