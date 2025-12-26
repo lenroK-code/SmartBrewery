@@ -30,18 +30,15 @@ void storage_init(void)
     }
 }
 
-void storage_append(const char *line)
+void storage_append(const char* path_to_file, const char *line)
 {
-    // TODO: tu wstawisz realne dane z czujników
-    // const char *line = "12345,25.5,10,-3,1000,1,3.7\n";
-
     if (s_log_mutex)
         xSemaphoreTake(s_log_mutex, portMAX_DELAY);
 
-    FILE *f = fopen("/spiflash/current.csv", "a");
+    FILE *f = fopen(path_to_file, "a");
     if (!f)
     {
-        ESP_LOGE(TAG_FS, "open current.csv failed");
+        ESP_LOGE(TAG_FS, "open %s failed", path_to_file);
     }
     else
     {
@@ -54,12 +51,12 @@ void storage_append(const char *line)
         xSemaphoreGive(s_log_mutex);
 }
 
-FILE *storage_open_log_for_read(void)
+FILE *storage_open_log_for_read(const char* path_to_file)
 {
     if (s_log_mutex)
         xSemaphoreTake(s_log_mutex, portMAX_DELAY);
-    // UWAGA: nie zwalniamy tutaj – trzyma go czytający, aż skończy
-    return fopen("/spiflash/current.csv", "r");
+    // WARNING: we do not release it here – the reader holds it until done
+    return fopen(path_to_file, "r");
 }
 
 void storage_close_log(FILE *f)
@@ -70,24 +67,24 @@ void storage_close_log(FILE *f)
         xSemaphoreGive(s_log_mutex);
 }
 
-void storage_delete_log(void)
+void storage_delete_log(const char* path_to_file)
 {
-    remove("/spiflash/current.csv");
+    remove(path_to_file);
 }
 
-void storage_dump_log_to_uart(void)
+void storage_dump_log_to_uart(const char* path_to_file)
 {
-    FILE *f = storage_open_log_for_read();
+    FILE *f = storage_open_log_for_read(path_to_file);
     if (!f)
     {
-        ESP_LOGE(TAG_FS, "cannot open /spiflash/current.csv for read");
+        // ESP_LOGE(TAG_FS, "cannot open /spiflash/current.csv for read");
+        ESP_LOGE(TAG_FS, "cannot open %s for read", path_to_file);
         return;
     }
 
     char line[256];
     while (fgets(line, sizeof(line), f))
     {
-        // linia zwykle ma już '\n', więc nie trzeba doklejać
         ESP_LOGI(TAG_FS, "LOG: %s", line);
     }
 

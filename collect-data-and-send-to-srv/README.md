@@ -1,32 +1,34 @@
-# _Sample project_
+zmien to później by ładnie wyglądało
+## Kalibracja iSpindel
 
-(See the README.md file in the upper level 'examples' directory for more information about examples.)
+Proces kalibracji polega na sporządzeniu kilku roztworów o znanych gęstościach (°Plato / SG) i zmierzeniu kąta nachylenia iSpindla dla każdego z nich. Na podstawie pomiarów generuje się równanie kalibracyjne, które umożliwia bezpośredni odczyt gęstości w oprogramowaniu urządzenia.
 
-This is the simplest buildable example. The example is used by command `idf.py create-project`
-that copies the project to user specified path and set it's name. For more information follow the [docs page](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html#start-a-new-project)
+| Punkt | SG     | °Plato | Woda (ml) | Cukier (g) | Uwagi |
+|:------|:-------|:-------|:----------:|:-----------:|:------|
+| 1 | 1.000 | 0° | 3000 | 0 | Czysta woda destylowana lub kranowa |
+| 2 | 1.050 | ~12.5° | 2143 | 1000 | Zacznij od 3 L wody + 1 kg cukru, gotuj do rozpuszczenia |
+| 3 | 1.040 | ~10° | 2347 | 1000 | Rozcieńcz punkt 2 o ~200 ml wody |
+| 4 | 1.030 | ~7.5° | 2571 | 1000 | Rozcieńcz punkt 3 o ~224 ml wody |
+| 5 | 1.020 | ~5° | 2857 | 1000 | Rozcieńcz punkt 4 o ~286 ml wody |
+| 6 | 1.010 | ~2.5° | 3226 | 1000 | Rozcieńcz punkt 5 o ~369 ml wody |
 
+### Obliczanie formuły kalibracyjnej
 
+1. Zanotuj kąty nachylenia (`Tilt`) z iSpindla dla każdego roztworu.
+2. Wprowadź dane (`Tilt` ↔ `SG` lub `°Plato`) do arkusza kalkulacyjnego.
+3. Utwórz dopasowanie wielomianowe 2. lub 3. stopnia, np.:
 
-## How to use example
-We encourage the users to use the example as a template for the new projects.
-A recommended way is to follow the instructions on a [docs page](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html#start-a-new-project).
+\[
+SG = a \cdot Tilt^3 + b \cdot Tilt^2 + c \cdot Tilt + d
+\]
 
-## Example folder contents
+4. Otrzymane współczynniki \(a, b, c, d\) służą do obliczeń w firmware iSpindla.
+5. W interfejsie konfiguracyjnym w sekcji **Calibration** wprowadź formułę dokładnie w tej postaci.
 
-The project **sample_project** contains one source file in C language [main.c](main/main.c). The file is located in folder [main](main).
+Przykładowa formuła (dla celów demonstracyjnych):
 
-ESP-IDF projects are built using CMake. The project build configuration is contained in `CMakeLists.txt`
-files that provide set of directives and instructions describing the project's source files and targets
-(executable, library, or both). 
+\[
+SG = 0.0000007 \cdot Tilt^3 - 0.0004 \cdot Tilt^2 + 0.0925 \cdot Tilt + 0.830
+\]
 
-Below is short explanation of remaining files in the project folder.
-
-```
-├── CMakeLists.txt
-├── main
-│   ├── CMakeLists.txt
-│   └── main.c
-└── README.md                  This is the file you are currently reading
-```
-Additionally, the sample project contains Makefile and component.mk files, used for the legacy Make based build system. 
-They are not used or needed when building with CMake and idf.py.
+Po zapisaniu zmian iSpindel będzie przeliczać odczyty kąta na wartość SG w sposób automatyczny.

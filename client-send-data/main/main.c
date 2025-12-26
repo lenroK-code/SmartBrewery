@@ -61,7 +61,7 @@ static void send_frame(int accel_x, int accel_y, int accel_z, int ir_detected, f
 {
     char frame[128];
     int len = snprintf(frame, sizeof(frame),
-                       "%d,%d,%d,%d,%.1f\n",
+                       "%d,%d,%d,%d,%.1f",
                        accel_x, accel_y, accel_z, ir_detected, temp);
 
     if (len < 0 || len >= sizeof(frame))
@@ -74,7 +74,7 @@ static void send_frame(int accel_x, int accel_y, int accel_z, int ir_detected, f
     {
         ble_gattc_write_flat(conn_handle, INPUT_CHAR_HANDLE,
                              frame, len, NULL, NULL);
-        ESP_LOGI("CLIENT", "Sent: %s", frame);
+        ESP_LOGI("CLIENT", "Sent: %s\n", frame);
     }
     else
     {
@@ -215,18 +215,12 @@ void app_main(void)
         // return;
     }
 
-    tcrt5000_init();
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(TAG, "tcrt5000_init failed: %d", ret);
-        // return;
-    }
+    // tcrt5000_init();
 
     ret = temp_init();
     if (ret != ESP_OK)
     {
         ESP_LOGE(TAG, "temp_init failed: %d", ret);
-        // return;
     }
     ESP_LOGI(TAG, "Sensors initialized");
 
@@ -234,7 +228,7 @@ void app_main(void)
     while (1)
     {
         vTaskDelay(pdMS_TO_TICKS(5000));
-        int ir_detected = tcrt5000_read(); // 1 - wykryto, 0 - nie wykryto wody w zbiorniku
+        // int ir_detected = tcrt5000_read(); // 1 - wykryto, 0 - nie wykryto wody w zbiorniku
 
         if (ESP_OK == read_accelerometer(&accel))
         {
@@ -249,6 +243,7 @@ void app_main(void)
         float temp = temp_read();
 
         // WYŚLIJ RAMKĘ
-        send_frame(accel_x, accel_y, accel_z, ir_detected, temp);
+        // send_frame(accel_x, accel_y, accel_z, ir_detected, temp);
+        send_frame(accel_x, accel_y, accel_z, -1, temp);
     }
 }

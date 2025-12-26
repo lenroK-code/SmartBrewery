@@ -17,6 +17,10 @@
 #include "services/gatt/ble_svc_gatt.h"
 
 #include "storage.h"
+#include "tcrt5000.h"
+#include "calibration.h"
+
+void get_acceleremoter_from_buf(uint8_t*, size_t, float*);
 
 static const char *TAG = "NIMBLE_SERVER";
 
@@ -27,12 +31,28 @@ static const char *TAG = "NIMBLE_SERVER";
 
 #define FILE_CHUNK_SIZE 250
 
-static uint8_t own_addr_type;
+#define LOG_FILE_PATH "/spiflash/current.csv" 
+
+static uint8_t own_addr_type; 
 static FILE *s_file = NULL;
 
+// Calibration specific
+typedef struct {
+    float sg;      // specific gravity
+    float reading; // raw sensor reading
+} CalPoint;
+
+static const float sg_table[6] = {
+    1.000, 1.050, 1.040, 1.030, 1.020, 1.010  // z Twojego CSV [file:35]
+};
+
+static int cal_state = CAL_STATE_IDLE;
+static int cal_point = 0;  // 0-6 punktów
+static CalPoint points[7]; // z poprzedniego kodu
+
 //-----------------------------------
-// Funkcja debugowa: wypisuje pierwsze N bajtów z pliku logu do logu ESP
-// do usuniecia
+// DEBUG function: prints first N bytes of log file to ESP log
+// to be removed
 static void snapshot_debug(void)
 {
     FILE *f = fopen("/spiflash/current.csv", "r");
@@ -43,7 +63,7 @@ static void snapshot_debug(void)
     char buf[64];
     size_t n = fread(buf, 1, sizeof(buf)-1, f);
     buf[n] = '\0';
-    ESP_LOGI(TAG, "DEBUG: first %d bytes: '%s'", (int)n, buf);
+    ESP_LOGI(TAG, "DEBUG: first %d bytes: \n%s", (int)n, buf);
     fclose(f);
 }
 //-----------------------------------
@@ -56,7 +76,7 @@ static void snapshot_open_for_read(void)
         storage_close_log(s_file);
         s_file = NULL;
     }
-    s_file = storage_open_log_for_read(); // zawsze od początku
+    s_file = storage_open_log_for_read(LOG_FILE_PATH); // always starts from beginning
     if (!s_file)
     {
         ESP_LOGE(TAG, "snapshot: cannot open current.csv");
@@ -67,7 +87,8 @@ static void snapshot_open_for_read(void)
     }
 }
 
-// Prosty helper czytania kolejnych chunków z pliku
+// Simple helper to read successive chunks from a file
+// Returns number of bytes read, or 0 on EOF
 static int file_get_next_chunk(uint8_t *buf, size_t buf_len)
 {
     if (!s_file)
@@ -81,6 +102,8 @@ static int file_get_next_chunk(uint8_t *buf, size_t buf_len)
     return (int)n;
 }
 
+// INPUT_CHAR handler
+// Read accelerometer data from buf, read IR sensor, combine and log
 static int input_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                                 struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
@@ -91,19 +114,39 @@ static int input_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR)
     {
         uint8_t buf[256];
-        if (len >= (int)sizeof(buf))
-            len = sizeof(buf) - 1;
+        if (len >= (int)sizeof(buf)-3)
+            len = sizeof(buf) - 4;
         os_mbuf_copydata(ctxt->om, 0, len, buf);
-        buf[len] = '\0';
+
+        int ir_read = tcrt5000_read();
+        // insert gravity reading here 
+        float acc_xyz[3];
+        get_acceleremoter_from_buf(buf, len, acc_xyz); //this has to be integrated into another function later
+        ESP_LOGI(TAG, "Accelerometer data: X=%.2f, Y=%.2f, Z=%.2f", acc_xyz[0], acc_xyz[1], acc_xyz[2]);
+
+        int written = snprintf((char *)&buf[len], sizeof(buf) - len, ",%d", ir_read);
+        if (written < 0 || (size_t)written >= sizeof(buf) - len)
+        {
+            buf[sizeof(buf)-1] = '\0'; // just in case
+        } else {
+            len += written;
+            buf[len] = '\0';
+        }
+
 
         ESP_LOGI(TAG, "INPUT frame: '%s'", buf);
-        storage_append((const char *)buf);
+
+        // UNCOMMENT TO SAVE TO LOG FILE
+// storage_append(LOG_FILE_PATH,(const char *)buf); // save to file
         return 0;
     }
     return BLE_ATT_ERR_UNLIKELY;
 }
 
 /* CMD_CHAR handler */
+// Commands:
+// 0x01 - start sending current.csv from beginning
+// 0x02 - delete current.csv
 static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                               struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
@@ -115,25 +158,66 @@ static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             os_mbuf_copydata(ctxt->om, 0, 1, &cmd);
             if (cmd == 0x01)
             {
-                // start wysyłania: otwórz current.csv od początku
+                // start sending current.csv from beginning
                 // if (s_file)
                 // {
                     snapshot_open_for_read();
-                    snapshot_debug(); // do usuniecia
+                    // snapshot_debug(); // do usuniecia
                     ESP_LOGI(TAG, "CMD 0x01: start transfer current.csv");
                 // }
-                // s_file = storage_open_log_for_read();
+                // s_file = storage_open_log_for_read(LOG_FILE_PATH);
             }
             else if (cmd == 0x02)
             {
-                // kasowanie logu (nowa warka)
+                // delete current.csv (new batch)
                 if (s_file)
                 {
                     storage_close_log(s_file);
                     s_file = NULL;
                 }
-                storage_delete_log();
+                storage_delete_log(LOG_FILE_PATH);
                 ESP_LOGI(TAG, "CMD 0x02: delete current.csv");
+            }
+             // *** Calibration ***
+            if (cmd == 0x03) {
+                if (cal_state == CAL_STATE_IDLE) {
+                    cal_state = CAL_STATE_READY;
+                    cal_point = 0;
+                    ESP_LOGI(TAG, "CAL: START - punkt %d/6 (SG=%.3f)", 
+                             cal_point+1, sg_table[cal_point]);
+                }
+                return ESP_OK;
+            }
+            else if (cmd == 0x04) {
+                if (cal_state == CAL_STATE_READY) {
+                    cal_state = CAL_STATE_MEASURING;
+                    ESP_LOGI(TAG, "CAL: POMIAR punktu %d/6...", cal_point+1);
+                    // Start timera pomiaru (patrz niżej)
+                    calibrate_module_start();
+                }
+                return ESP_OK;
+            }
+            else if (cmd == 0x05) {
+                if (cal_state == CAL_STATE_MEASURING) {
+                    // Zapisz punkt i przejdź dalej
+                    calibrate_module_stop();
+                    cal_state = CAL_STATE_SAVED;
+                    ESP_LOGI(TAG, "CAL: ZAPISANO punkt %d/6", cal_point+1);
+                    
+                    cal_point++;
+                    if (cal_point < 6) {
+                        // Następny punkt
+                        cal_state = CAL_STATE_READY;
+                        ESP_LOGI(TAG, "CAL: NASTĘPNY %d/6 (SG=%.3f)", 
+                                 cal_point+1, sg_table[cal_point]);
+                    } else {
+                        // KONIEC - oblicz wielomian!
+                        cal_state = CAL_STATE_IDLE;
+                        calculate_polynomial(); // i thnk so at least
+                        ESP_LOGI(TAG, "CAL: KONIEC! Wielomian gotowy!");
+                    }
+                }
+                return ESP_OK;
             }
         }
         return ESP_OK;
@@ -142,6 +226,7 @@ static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 }
 
 /* FILE_CHAR handler */
+// Sends successive chunks of current.csv file
 static int file_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                                struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
@@ -160,7 +245,7 @@ static int file_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     return 0;
 }
 
-/* Definicja GATT: 1 serwis, 2 charakterystyki */
+// GATT definition: 1 service, 3 characteristics
 static const struct ble_gatt_svc_def gatt_svcs[] = {
     {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
@@ -187,7 +272,7 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
             {0} // terminator
         },
     },
-    {0} // koniec listy
+    {0} // end of list
 };
 
 static void start_advertising(void);
@@ -256,7 +341,7 @@ static void on_sync(void)
         return;
     }
 
-    // ustaw nazwę urządzenia (optional)
+    // set the name of the device (optional)
     ble_svc_gap_device_name_set("ESP_LOG_SERVER");
 
     start_advertising();
@@ -266,6 +351,17 @@ static void host_task(void *param)
 {
     nimble_port_run();
     nimble_port_freertos_deinit();
+}
+
+void get_acceleremoter_from_buf(uint8_t *buf, size_t len, float *acc_xyz) {
+        int parsed = sscanf((const char *)buf, "%f,%f,%f", &acc_xyz[0], &acc_xyz[1], &acc_xyz[2]);
+        if (parsed != 3) {
+            ESP_LOGE(TAG, "Error parsing accelerometer data from buffer");
+            acc_xyz[0] = 0.0f;
+            acc_xyz[1] = 0.0f;
+            acc_xyz[2] = 0.0f;
+            return;
+        }
 }
 
 void app_main(void)
@@ -288,8 +384,8 @@ void app_main(void)
     nimble_port_freertos_init(host_task);
 
     ESP_LOGI(TAG, "NimBLE log server started");
+    // tcrt5000_init();
 
-    // logowanie testowych próbek w tle
     while (1)
     {
         // storage_append();          // tu docelowo prawdziwe dane
