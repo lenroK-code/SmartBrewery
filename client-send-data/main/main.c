@@ -24,7 +24,6 @@ static const char *TAG = "NIMBLE_CLIENT";
 #define SVC_UUID_16 0x1000
 #define CMD_CHAR_UUID_16 0x1001
 
-// ... nagłówki jak wcześniej ...
 
 static uint8_t own_addr_type;
 static uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;

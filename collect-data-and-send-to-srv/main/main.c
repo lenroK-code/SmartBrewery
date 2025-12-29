@@ -36,36 +36,24 @@ static const char *TAG = "NIMBLE_SERVER";
 static uint8_t own_addr_type; 
 static FILE *s_file = NULL;
 
-// Calibration specific
-typedef struct {
-    float sg;      // specific gravity
-    float reading; // raw sensor reading
-} CalPoint;
 
-static const float sg_table[6] = {
-    1.000, 1.050, 1.040, 1.030, 1.020, 1.010  // z Twojego CSV [file:35]
-};
-
-static int cal_state = CAL_STATE_IDLE;
-static int cal_point = 0;  // 0-6 punktów
-static CalPoint points[7]; // z poprzedniego kodu
 
 //-----------------------------------
 // DEBUG function: prints first N bytes of log file to ESP log
 // to be removed
-static void snapshot_debug(void)
-{
-    FILE *f = fopen("/spiflash/current.csv", "r");
-    if (!f) {
-        ESP_LOGE(TAG, "DEBUG: cannot open current.csv");
-        return;
-    }
-    char buf[64];
-    size_t n = fread(buf, 1, sizeof(buf)-1, f);
-    buf[n] = '\0';
-    ESP_LOGI(TAG, "DEBUG: first %d bytes: \n%s", (int)n, buf);
-    fclose(f);
-}
+// static void snapshot_debug(void)
+// {
+//     FILE *f = fopen("/spiflash/current.csv", "r");
+//     if (!f) {
+//         ESP_LOGE(TAG, "DEBUG: cannot open current.csv");
+//         return;
+//     }
+//     char buf[64];
+//     size_t n = fread(buf, 1, sizeof(buf)-1, f);
+//     buf[n] = '\0';
+//     ESP_LOGI(TAG, "DEBUG: first %d bytes: \n%s", (int)n, buf);
+//     fclose(f);
+// }
 //-----------------------------------
 
 
@@ -122,7 +110,10 @@ static int input_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         // insert gravity reading here 
         float acc_xyz[3];
         get_acceleremoter_from_buf(buf, len, acc_xyz); //this has to be integrated into another function later
+        float tilt = calculate_tilt_from_accel(acc_xyz[0], acc_xyz[1], acc_xyz[2]);
+        measurement_add_sample(tilt);
         ESP_LOGI(TAG, "Accelerometer data: X=%.2f, Y=%.2f, Z=%.2f", acc_xyz[0], acc_xyz[1], acc_xyz[2]);
+
 
         int written = snprintf((char *)&buf[len], sizeof(buf) - len, ",%d", ir_read);
         if (written < 0 || (size_t)written >= sizeof(buf) - len)
@@ -162,7 +153,6 @@ static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 // if (s_file)
                 // {
                     snapshot_open_for_read();
-                    // snapshot_debug(); // do usuniecia
                     ESP_LOGI(TAG, "CMD 0x01: start transfer current.csv");
                 // }
                 // s_file = storage_open_log_for_read(LOG_FILE_PATH);
@@ -179,44 +169,16 @@ static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 ESP_LOGI(TAG, "CMD 0x02: delete current.csv");
             }
              // *** Calibration ***
-            if (cmd == 0x03) {
-                if (cal_state == CAL_STATE_IDLE) {
-                    cal_state = CAL_STATE_READY;
-                    cal_point = 0;
-                    ESP_LOGI(TAG, "CAL: START - punkt %d/6 (SG=%.3f)", 
-                             cal_point+1, sg_table[cal_point]);
-                }
+            else if (cmd == 0x03) {
+                calibrate_start();
                 return ESP_OK;
             }
-            else if (cmd == 0x04) {
-                if (cal_state == CAL_STATE_READY) {
-                    cal_state = CAL_STATE_MEASURING;
-                    ESP_LOGI(TAG, "CAL: POMIAR punktu %d/6...", cal_point+1);
-                    // Start timera pomiaru (patrz niżej)
-                    calibrate_module_start();
-                }
+            else if (cmd == 0x04 && calibrate_is_ready_for_module_start()) {
+                calibrate_module_start();
                 return ESP_OK;
             }
-            else if (cmd == 0x05) {
-                if (cal_state == CAL_STATE_MEASURING) {
-                    // Zapisz punkt i przejdź dalej
+            else if (cmd == 0x05 && calibrate_is_ready_for_save()) {
                     calibrate_module_stop();
-                    cal_state = CAL_STATE_SAVED;
-                    ESP_LOGI(TAG, "CAL: ZAPISANO punkt %d/6", cal_point+1);
-                    
-                    cal_point++;
-                    if (cal_point < 6) {
-                        // Następny punkt
-                        cal_state = CAL_STATE_READY;
-                        ESP_LOGI(TAG, "CAL: NASTĘPNY %d/6 (SG=%.3f)", 
-                                 cal_point+1, sg_table[cal_point]);
-                    } else {
-                        // KONIEC - oblicz wielomian!
-                        cal_state = CAL_STATE_IDLE;
-                        calculate_polynomial(); // i thnk so at least
-                        ESP_LOGI(TAG, "CAL: KONIEC! Wielomian gotowy!");
-                    }
-                }
                 return ESP_OK;
             }
         }
@@ -371,6 +333,13 @@ void app_main(void)
         ESP_LOGE(TAG, "nvs_flash_init failed: %d", ret);
 
     storage_init();
+    calibration_init();
+
+    if(calibration_is_loaded()) {
+        ESP_LOGI(TAG, "Kalibracja z NVS aktywna!");
+    } else {
+        ESP_LOGI(TAG, "Brak kalibracji - nowa");
+    }
 
     nimble_port_init();
 
@@ -391,5 +360,10 @@ void app_main(void)
         // storage_append();          // tu docelowo prawdziwe dane
         // storage_dump_log_to_uart(); // testowo wypisz log do UART
         vTaskDelay(pdMS_TO_TICKS(10000)); // testowo co 10 s
+        float test_tilts[] = {-13.0f, -12.5f, 0.0f, 20.0f};
+for(int i = 0; i < 4; i++) {
+    float sg = calibrate_tilt_to_sg(test_tilts[i]);
+    ESP_LOGI("TEST", "Tilt=%.1f° → SG=%.3f, Plato=%.1f", test_tilts[i], sg, sg_to_plato(sg));
+}
     }
 }
