@@ -28,6 +28,11 @@ static const char *TAG = "NIMBLE_CLIENT";
 static uint8_t own_addr_type;
 static uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
 
+static bool cal_mode = false;
+static const int normal_delay_ms = 5000;
+static const int cal_delay_ms = 10;
+
+
 // USTAW TE DWIE WARTOŚCI POD SERWER:
 #define CMD_CHAR_HANDLE 0x0025   // handle CMD_CHAR na serwerze
 #define INPUT_CHAR_HANDLE 0x0014 // handle FILE_DATA_CHAR na serwerze
@@ -144,6 +149,29 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "Scan complete");
         return 0;
 
+    case BLE_GAP_EVENT_NOTIFY_RX:{
+         // Calibration notifications from server
+        char msg[32];
+        int msg_len = OS_MBUF_PKTLEN(event->notify_rx.om);
+        if (msg_len < (int)sizeof(msg)) {
+            memcpy(msg, event->notify_rx.om->om_data, msg_len);
+            msg[msg_len] = '\0';
+            
+            if (strcmp(msg, "CAL_START") == 0) {
+                cal_mode = true;
+                ESP_LOGI(TAG, "Calibration started - switching to %dms delay", cal_delay_ms);
+            } 
+            else if (strcmp(msg, "CAL_DONE") == 0) {
+                cal_mode = false;
+                ESP_LOGI(TAG, "Calibration complete - back to %dms delay", normal_delay_ms);
+            }
+            else {
+                ESP_LOGI(TAG, "Notify received: %s", msg);
+            }
+        }
+        return 0;
+    }
+
     default:
         return 0;
     }
@@ -190,7 +218,7 @@ static void host_task(void *param)
 void app_main(void)
 {
 
-     esp_err_t ret = nvs_flash_init();
+    esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ret = nvs_flash_init();
@@ -226,7 +254,6 @@ void app_main(void)
     mpu9250_accel_t accel;
     while (1)
     {
-        vTaskDelay(pdMS_TO_TICKS(5000));
         // int ir_detected = tcrt5000_read(); // 1 - wykryto, 0 - nie wykryto wody w zbiorniku
 
         if (ESP_OK == read_accelerometer(&accel))
@@ -244,5 +271,7 @@ void app_main(void)
         // WYŚLIJ RAMKĘ
         // send_frame(accel_x, accel_y, accel_z, ir_detected, temp);
         send_frame(accel_x, accel_y, accel_z, -1, temp);
+        int delay_ms = cal_mode ? cal_delay_ms : normal_delay_ms;
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
     }
 }

@@ -1,3 +1,4 @@
+// prawopdobnie nie dziala notify i client nic nie dostaje takze ten - do naprawy
 #include <stdio.h>
 #include <string.h>
 
@@ -13,6 +14,8 @@
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
 #include "host/ble_gap.h"
+#include "host/ble_gatt.h"
+#include "os/os_mbuf.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
@@ -28,6 +31,7 @@ static const char *TAG = "NIMBLE_SERVER";
 #define CMD_CHAR_UUID_16 0x1001
 #define FILE_CHAR_UUID_16 0x1002
 #define INPUT_CHAR_UUID_16 0x1003
+#define CAL_NOTIFY_UUID_16 0x1004
 
 #define FILE_CHUNK_SIZE 250
 
@@ -35,6 +39,7 @@ static const char *TAG = "NIMBLE_SERVER";
 
 static uint8_t own_addr_type; 
 static FILE *s_file = NULL;
+static uint16_t cal_notify_handle = 0;
 
 
 
@@ -90,6 +95,15 @@ static int file_get_next_chunk(uint8_t *buf, size_t buf_len)
     return (int)n;
 }
 
+static int gatt_access_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                                 struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        cal_notify_handle = attr_handle;  // Capture handle!
+        ESP_LOGI(TAG, "CAL_NOTIFY handle captured: 0x%04x", cal_notify_handle);
+    }
+    return ESP_OK;
+}
 // INPUT_CHAR handler
 // Read accelerometer data from buf, read IR sensor, combine and log
 static int input_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
@@ -170,7 +184,7 @@ static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             }
              // *** Calibration ***
             else if (cmd == 0x03) {
-                calibrate_start();
+                calibrate_start(conn_handle);
                 return ESP_OK;
             }
             else if (cmd == 0x04 && calibrate_is_ready_for_module_start()) {
@@ -178,7 +192,7 @@ static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 return ESP_OK;
             }
             else if (cmd == 0x05 && calibrate_is_ready_for_save()) {
-                    calibrate_module_stop();
+                    calibrate_module_stop(conn_handle);
                 return ESP_OK;
             }
         }
@@ -230,6 +244,12 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
                 .uuid = BLE_UUID16_DECLARE(INPUT_CHAR_UUID_16),
                 .access_cb = input_char_access_cb,
                 .flags = BLE_GATT_CHR_F_WRITE,
+            },
+            {
+                // NOTIFY_CHAR
+                .uuid = BLE_UUID16_DECLARE(CAL_NOTIFY_UUID_16),
+                .access_cb = gatt_access_access_cb,
+                .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ,
             },
             {0} // terminator
         },
@@ -315,6 +335,27 @@ static void host_task(void *param)
     nimble_port_freertos_deinit();
 }
 
+
+int send_cal_notify(uint16_t conn_handle, const char* message) {
+   uint8_t buf[64];
+    int len = snprintf((char*)buf, sizeof(buf), "%s", message);
+    
+    struct os_mbuf *om = ble_hs_mbuf_att_pkt();
+    if (!om) {
+        ESP_LOGE(TAG, "mbuf alloc failed");
+        return BLE_HS_ENOMEM;
+    }
+    
+    int rc_append = os_mbuf_append(om, buf, len);
+    if (rc_append != 0) {
+        os_mbuf_free_chain(om);
+        return rc_append;
+    }
+    
+    int rc_notify = ble_gatts_notify_custom(conn_handle, cal_notify_handle, om);
+    ESP_LOGI(TAG, "CAL_NOTIFY: %s (rc=%d)", message, rc_notify);
+    return rc_notify;
+}
 void get_acceleremoter_from_buf(uint8_t *buf, size_t len, float *acc_xyz) {
         int parsed = sscanf((const char *)buf, "%f,%f,%f", &acc_xyz[0], &acc_xyz[1], &acc_xyz[2]);
         if (parsed != 3) {
@@ -325,6 +366,8 @@ void get_acceleremoter_from_buf(uint8_t *buf, size_t len, float *acc_xyz) {
             return;
         }
 }
+
+
 
 void app_main(void)
 {
@@ -360,10 +403,12 @@ void app_main(void)
         // storage_append();          // tu docelowo prawdziwe dane
         // storage_dump_log_to_uart(); // testowo wypisz log do UART
         vTaskDelay(pdMS_TO_TICKS(10000)); // testowo co 10 s
-        float test_tilts[] = {-13.0f, -12.5f, 0.0f, 20.0f};
-for(int i = 0; i < 4; i++) {
+    //test calibration
+    float test_tilts[] = {-13.0f, -12.5f, 0.0f, 20.0f};
+    for(int i = 0; i < 4; i++) {
     float sg = calibrate_tilt_to_sg(test_tilts[i]);
     ESP_LOGI("TEST", "Tilt=%.1f° → SG=%.3f, Plato=%.1f", test_tilts[i], sg, sg_to_plato(sg));
-}
+    }
+    //end test calibration
     }
 }

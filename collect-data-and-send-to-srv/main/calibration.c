@@ -218,10 +218,11 @@ float calculate_tilt_from_accel(float ax_raw, float ay_raw, float az_raw) {
 }
 
 
-void calibrate_start(void) {
+void calibrate_start(uint16_t conn_handle) {
     if (cal_state == CAL_STATE_IDLE) {
         cal_state = CAL_STATE_READY;
         cal_point = 0;
+        calibrate_notify_start(conn_handle); // conn_handle to be set properly
         ESP_LOGI(TAG, "CAL: START punkt %d/6 (SG=%.3f)", 
                  cal_point+1, sg_table[cal_point]);
     }
@@ -236,7 +237,7 @@ void calibrate_module_start(void) {
     }
 }
 
-void calibrate_module_stop(void) {
+void calibrate_module_stop(uint16_t conn_handle) {
     if (cal_state == CAL_STATE_MEASURING) {
        float avg_tilt = measurement_get_average();  // *** uśrednij ***
         
@@ -248,6 +249,7 @@ void calibrate_module_stop(void) {
         if (cal_point >= 6) {
             calculate_polynomial();
             cal_state = CAL_STATE_DONE;
+            calibrate_notify_complete(conn_handle); // conn_handle to be set properly
             ESP_LOGI(TAG, "CAL: KONIEC! Wielomian gotowy!");
         } else {
             cal_state = CAL_STATE_READY;
@@ -279,4 +281,12 @@ float calibrate_tilt_to_sg(float tilt) {
 
 float sg_to_plato(float sg) {
     return (-616.868 + 1111.14*sg - 630.272*sg*sg + 135.997*sg*sg*sg);
+}
+
+void calibrate_notify_start(uint16_t conn_handle) {
+    send_cal_notify(conn_handle, "CAL_START");
+}
+
+void calibrate_notify_complete(uint16_t conn_handle) {
+    send_cal_notify(conn_handle, "CAL_DONE");
 }
