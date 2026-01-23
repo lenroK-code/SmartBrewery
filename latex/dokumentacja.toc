@@ -1,0 +1,15 @@
+\babel@toc {polish}{}\relax 
+\contentsline {section}{\numberline {1}Wprowadzenie}{3}{section.1}%
+\contentsline {section}{\numberline {2}Tytuł projektu i cel}{3}{section.2}%
+\contentsline {section}{\numberline {3}Specyfikacja S.M.A.R.T.}{3}{section.3}%
+\contentsline {section}{\numberline {4}Podział obowiązków}{3}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Jacek Kuczak -- System przelewowy}{3}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Kornel Niewiadomski -- Sensoryka i Komunikacja}{4}{subsection.4.2}%
+\contentsline {section}{\numberline {5}Rzeczywisty harmonogram realizacji}{4}{section.5}%
+\contentsline {section}{\numberline {6}Opis realizacji zadań -- Jacek Kuczak}{4}{section.6}%
+\contentsline {subsection}{\numberline {6.1}BREW-2: Obsługa czujnika przepływu}{4}{subsection.6.1}%
+\contentsline {section}{\numberline {7}Opis realizacji zadań -- Kornel Niewiadomski}{5}{section.7}%
+\contentsline {subsection}{\numberline {7.1}BREW-9: Kalibracja gęstości (Tilt)}{5}{subsection.7.1}%
+\contentsline {section}{\numberline {8}Dokumentacja testów i screeny}{5}{section.8}%
+\contentsline {section}{\numberline {9}Podsumowanie i wnioski}{5}{section.9}%
+\contentsline {section}{\numberline {10}Bibliografia}{5}{section.10}%

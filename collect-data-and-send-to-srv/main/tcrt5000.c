@@ -26,12 +26,12 @@ esp_err_t tcrt5000_init()
 int tcrt5000_read()
 {
     // uncomment the following to have actual reading
-    // int level = gpio_get_level(TCRT5000_PIN);
-    // ESP_LOGD(TAG, "TCRT5000 read level: %d", level);
-    // return level;
-
-
-    // randomly return 0 or 1 for testing purposes
-    int level = rand() % 2; 
+    int level = gpio_get_level(TCRT5000_PIN);
+    ESP_LOGD(TAG, "TCRT5000 read level: %d", level);
     return level;
+
+
+    // // randomly return 0 or 1 for testing purposes
+    // int level = rand() % 2; 
+    // return level;
 }

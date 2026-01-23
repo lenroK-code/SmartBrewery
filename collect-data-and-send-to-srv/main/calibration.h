@@ -22,9 +22,9 @@ cal_state_t calibrate_get_state(void);
 bool calibrate_is_ready_for_module_start(void); // which point is being calibrated (0-5)
 bool calibrate_is_ready_for_save(void);
 void measurement_add_sample(float tilt);  // dla main.c
-float calculate_tilt_from_accel(float ax, float ay, float az);
+float calculate_tilt_from_accel(int ax, int ay, int az);
 
 float calibrate_tilt_to_sg(float tilt);
 float sg_to_plato(float sg);
 
-extern int send_cal_notify(uint16_t conn_handle, const char* message);
+extern int broadcast_cal_notify(uint16_t conn_handle, const char* message);

@@ -25,7 +25,8 @@ static int measurement_count = 0;
 
 static int cal_state = CAL_STATE_IDLE;
 static int cal_point = 0;
-static const float sg_table[6] = {1.000, 1.050, 1.040, 1.030, 1.020, 1.010};
+// static const float sg_table[6] = {1.000, 1.050, 1.040, 1.030, 1.020, 1.010};
+static const float sg_table[6] = {1.048, 1.040, 1.030, 1.020, 1.010, 1.000};
 
 static CalPoint points[6];
 static float coeffs[4];
@@ -42,6 +43,10 @@ bool calibration_is_loaded(void) {
 
 void calibration_init(void) {
     load_calibration_from_nvs();
+}
+
+cal_state_t calibrate_get_state(void){
+    return (cal_state_t)cal_state;
 }
 
 void load_calibration_from_nvs(void) {
@@ -201,9 +206,8 @@ void calculate_polynomial() {
 }
 
 
-// potencjalnie zmienić to na własną funkcję tilt calculation
-float calculate_tilt_from_accel(float ax_raw, float ay_raw, float az_raw) {
-    // Oficjalny wzór iSpindel [web:3]
+float calculate_tilt_from_accel(int ax_raw, int ay_raw, int az_raw) {
+    // Oficjalny wzór iSpindel
     float scale = 1.0f / 16384.0f;  // MPU6050 ±2g standard
     float ax = ax_raw * scale;
     float ay = ay_raw * scale; 
@@ -231,7 +235,7 @@ void calibrate_start(uint16_t conn_handle) {
 void calibrate_module_start(void) {
     if (cal_state == CAL_STATE_READY && cal_point < 6) {
         cal_state = CAL_STATE_MEASURING;
-      measuring = true;
+        measuring = true;
         measurement_count = 0;
         ESP_LOGI(TAG, "CAL: POMIAR %d/6... (queue=%d)", cal_point+1, tilt_queue.count);
     }
@@ -268,7 +272,6 @@ bool calibrate_is_ready_for_save(void) {
     return cal_state == CAL_STATE_MEASURING;
 }
 
-
 float calibrate_tilt_to_sg(float tilt) {
     if (!complete) return 1.000f;
     float sg = coeffs[0]*tilt*tilt*tilt + 
@@ -284,9 +287,9 @@ float sg_to_plato(float sg) {
 }
 
 void calibrate_notify_start(uint16_t conn_handle) {
-    send_cal_notify(conn_handle, "CAL_START");
+    broadcast_cal_notify(conn_handle, "CAL_START");
 }
 
 void calibrate_notify_complete(uint16_t conn_handle) {
-    send_cal_notify(conn_handle, "CAL_DONE");
+    broadcast_cal_notify(conn_handle, "CAL_DONE");
 }

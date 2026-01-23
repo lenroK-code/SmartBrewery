@@ -12,6 +12,8 @@
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
 #include "host/ble_gap.h"
+#include "host/ble_gatt.h"
+#include "os/os_mbuf.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
@@ -32,10 +34,13 @@ static bool cal_mode = false;
 static const int normal_delay_ms = 5000;
 static const int cal_delay_ms = 10;
 
+// static uint16_t notify_char_handle = 0;
+
 
 // USTAW TE DWIE WARTOŚCI POD SERWER:
 #define CMD_CHAR_HANDLE 0x0025   // handle CMD_CHAR na serwerze
 #define INPUT_CHAR_HANDLE 0x0014 // handle FILE_DATA_CHAR na serwerze
+#define CAL_NOTIFY_CHAR_HANDLE 0x0016 // handle FILE_DATA_CHAR na serwerze
 
 // prosty parser nazwy
 static void parse_adv_name(const uint8_t *data, uint8_t length_data,
@@ -59,14 +64,25 @@ static void parse_adv_name(const uint8_t *data, uint8_t length_data,
     }
 }
 
+static int cccd_write_cb(uint16_t conn_handle, const struct ble_gatt_error *error, struct ble_gatt_attr *attr, void *arg) {
+    if (error->status == 0) {
+        ESP_LOGI(TAG, "CCCD enabled successfully for notify! (handle=0x%04x)", attr ? attr->handle : 0);
+    } else {
+        ESP_LOGE(TAG, "CCCD write FAILED! status=%d handle=0x%04x - check server CCCD perms/handle",
+                 error->status, CAL_NOTIFY_CHAR_HANDLE + 1);
+    }
+    return error->status;
+}
+
+
 static void start_scan(void);
 
-static void send_frame(int accel_x, int accel_y, int accel_z, int ir_detected, float temp)
+static void send_frame(int accel_x, int accel_y, int accel_z, float temp)
 {
     char frame[128];
     int len = snprintf(frame, sizeof(frame),
-                       "%d,%d,%d,%d,%.1f",
-                       accel_x, accel_y, accel_z, ir_detected, temp);
+                       "%d,%d,%d,%.1f",
+                       accel_x, accel_y, accel_z, temp);
 
     if (len < 0 || len >= sizeof(frame))
     {
@@ -96,10 +112,12 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             conn_handle = event->connect.conn_handle;
             ESP_LOGI("CLIENT", "Connected, conn=%d", conn_handle);
             ble_gattc_exchange_mtu(conn_handle, NULL, NULL);
-        }
-        else
-        {
-            ESP_LOGW("CLIENT", "Connect failed; status=%d", event->connect.status);
+            uint8_t cccd_val[2] = {0x01, 0x00}; // 0x0001 little-endian
+            int rc = ble_gattc_write_flat(conn_handle, CAL_NOTIFY_CHAR_HANDLE + 1,
+                                          cccd_val, 2, cccd_write_cb, NULL);
+            ESP_LOGI(TAG, "CCCD write queued rc=%d handle=0x%04x", rc, CAL_NOTIFY_CHAR_HANDLE + 1);
+
+            ble_gattc_read(conn_handle, CAL_NOTIFY_CHAR_HANDLE, NULL, NULL);
         }
         return 0;
 
@@ -149,30 +167,35 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         ESP_LOGI(TAG, "Scan complete");
         return 0;
 
-    case BLE_GAP_EVENT_NOTIFY_RX:{
-         // Calibration notifications from server
+    case BLE_GAP_EVENT_NOTIFY_RX:
+    {
+        ESP_LOGI(TAG, "NOTIFY RX attr=0x%04x len=%d", event->notify_rx.attr_handle,
+                 OS_MBUF_PKTLEN(event->notify_rx.om));
         char msg[32];
         int msg_len = OS_MBUF_PKTLEN(event->notify_rx.om);
-        if (msg_len < (int)sizeof(msg)) {
-            memcpy(msg, event->notify_rx.om->om_data, msg_len);
-            msg[msg_len] = '\0';
-            
-            if (strcmp(msg, "CAL_START") == 0) {
-                cal_mode = true;
-                ESP_LOGI(TAG, "Calibration started - switching to %dms delay", cal_delay_ms);
-            } 
-            else if (strcmp(msg, "CAL_DONE") == 0) {
-                cal_mode = false;
-                ESP_LOGI(TAG, "Calibration complete - back to %dms delay", normal_delay_ms);
-            }
-            else {
-                ESP_LOGI(TAG, "Notify received: %s", msg);
-            }
+        if (msg_len >= (int)sizeof(msg))
+            msg_len = sizeof(msg) - 1;
+
+        os_mbuf_copydata(event->notify_rx.om, 0, msg_len, msg);
+        msg[msg_len] = '\0';
+
+        ESP_LOGI(TAG, "'%s'", msg);
+
+        if (strcmp(msg, "CAL_START") == 0)
+        {
+            cal_mode = true;
+            ESP_LOGI(TAG, "CAL ON → 10ms!");
+        }
+        else if (strcmp(msg, "CAL_DONE") == 0)
+        {
+            cal_mode = false;
+            ESP_LOGI(TAG, "CAL OFF → 5000ms");
         }
         return 0;
     }
 
     default:
+    ESP_LOGI(TAG, "GAP event=%d", event->type);  // POKAŻ WSZYSTKIE eventy!
         return 0;
     }
 }
@@ -217,7 +240,6 @@ static void host_task(void *param)
 
 void app_main(void)
 {
-
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -266,12 +288,13 @@ void app_main(void)
         int16_t accel_y = accel.accel_y;
         int16_t accel_z = accel.accel_z;
 
-        float temp = temp_read();
+        float temp = temp_read() -4.5f; // Odczytaj temperaturę z DS18B20
 
         // WYŚLIJ RAMKĘ
-        // send_frame(accel_x, accel_y, accel_z, ir_detected, temp);
-        send_frame(accel_x, accel_y, accel_z, -1, temp);
+        send_frame(accel_x, accel_y, accel_z, temp); // Korekta o 4.5 stopnia
+        ESP_LOGI(TAG, "Temp: %.1f C", temp); 
         int delay_ms = cal_mode ? cal_delay_ms : normal_delay_ms;
+        ESP_LOGI(TAG, "DELAY: %d ms", delay_ms);
         vTaskDelay(pdMS_TO_TICKS(delay_ms));
     }
 }

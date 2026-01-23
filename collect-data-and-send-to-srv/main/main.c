@@ -1,10 +1,8 @@
-// prawopdobnie nie dziala notify i client nic nie dostaje takze ten - do naprawy
 #include <stdio.h>
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
 
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -19,11 +17,14 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
+#include "esp_pm.h"           // Power Management
+#include "esp_sleep.h"        // Sleep API
+
 #include "storage.h"
 #include "tcrt5000.h"
 #include "calibration.h"
 
-void get_acceleremoter_from_buf(uint8_t*, size_t, float*);
+// void get_acceleremoter_from_buf(uint8_t*, size_t, int*);
 
 static const char *TAG = "NIMBLE_SERVER";
 
@@ -34,12 +35,14 @@ static const char *TAG = "NIMBLE_SERVER";
 #define CAL_NOTIFY_UUID_16 0x1004
 
 #define FILE_CHUNK_SIZE 250
-
 #define LOG_FILE_PATH "/spiflash/current.csv" 
+
+#define MAX_CONNS 3
 
 static uint8_t own_addr_type; 
 static FILE *s_file = NULL;
-static uint16_t cal_notify_handle = 0;
+static uint16_t conn_cal_handles[MAX_CONNS];  // per connection notify handles
+static uint64_t last_wake_time = 0;
 
 
 
@@ -95,12 +98,20 @@ static int file_get_next_chunk(uint8_t *buf, size_t buf_len)
     return (int)n;
 }
 
-static int gatt_access_access_cb(uint16_t conn_handle, uint16_t attr_handle,
-                                 struct ble_gatt_access_ctxt *ctxt, void *arg)
+static int gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
+                          struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
+    ESP_LOGI(TAG, "CAL_NOTIFY access: op=%d handle=0x%04x", ctxt->op, attr_handle);
+
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-        cal_notify_handle = attr_handle;  // Capture handle!
-        ESP_LOGI(TAG, "CAL_NOTIFY handle captured: 0x%04x", cal_notify_handle);
+           if (attr_handle == 0x0016) {
+             if (conn_handle < MAX_CONNS) {
+                conn_cal_handles[conn_handle] = attr_handle;
+                ESP_LOGI(TAG, "conn=%d SUBSCRIBED handle=0x%04x", conn_handle, attr_handle);
+             } else {
+                 ESP_LOGW(TAG, "Conn handle %d out of bounds!", conn_handle);
+             }
+        }
     }
     return ESP_OK;
 }
@@ -115,34 +126,46 @@ static int input_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR)
     {
+        last_wake_time = esp_timer_get_time(); // update last wake time on input
         uint8_t buf[256];
-        if (len >= (int)sizeof(buf)-3)
-            len = sizeof(buf) - 4;
+        if (len >= (int)sizeof(buf) - 32) // Więcej miejsca na logi
+            len = sizeof(buf) - 32;
         os_mbuf_copydata(ctxt->om, 0, len, buf);
+        buf[len] = '\0'; // WAŻNE! Null-terminate dla sscanf
 
-        int ir_read = tcrt5000_read();
-        // insert gravity reading here 
-        float acc_xyz[3];
-        get_acceleremoter_from_buf(buf, len, acc_xyz); //this has to be integrated into another function later
-        float tilt = calculate_tilt_from_accel(acc_xyz[0], acc_xyz[1], acc_xyz[2]);
-        measurement_add_sample(tilt);
-        ESP_LOGI(TAG, "Accelerometer data: X=%.2f, Y=%.2f, Z=%.2f", acc_xyz[0], acc_xyz[1], acc_xyz[2]);
-
-
-        int written = snprintf((char *)&buf[len], sizeof(buf) - len, ",%d", ir_read);
-        if (written < 0 || (size_t)written >= sizeof(buf) - len)
+        // PARSUJ: accelX,Y,Z,temp (4 pola!)
+        int acc_xyz[3];
+        float temp_c;
+        if (sscanf((const char *)buf, "%d,%d,%d,%f",
+                   &acc_xyz[0], &acc_xyz[1], &acc_xyz[2], &temp_c) != 4)
         {
-            buf[sizeof(buf)-1] = '\0'; // just in case
-        } else {
-            len += written;
-            buf[len] = '\0';
+            ESP_LOGE(TAG, "Parse failed! Expected: X,Y,Z,Temp");
+            return 0;
         }
 
+        int ir_read = tcrt5000_read(); // ir sensor value
 
+        // convert to tilt, sg, plato
+        float tilt = calculate_tilt_from_accel(acc_xyz[0], acc_xyz[1], acc_xyz[2]);
+        float sg = calibrate_tilt_to_sg(tilt);
+        float plato = sg_to_plato(sg);
+
+
+        ESP_LOGI(TAG, "Raw: X=%d Y=%d Z=%d T=%.1f°C IR=%d",
+                 acc_xyz[0], acc_xyz[1], acc_xyz[2], temp_c, ir_read);
+        ESP_LOGI(TAG, "SG=%.3f Plato=%.1f Tilt=%.2f", sg, plato, tilt);
+
+        if (calibrate_get_state() == CAL_STATE_MEASURING) {
+            measurement_add_sample(tilt); // add calibration sample
+        } else if (calibrate_get_state() == CAL_STATE_IDLE||calibrate_get_state() == CAL_STATE_DONE) {
+            // save to log file
+            char csv_line[64];
+            snprintf(csv_line, sizeof(csv_line), "%.3f,%.1f,%.1f,%d\n",
+                    sg, plato, temp_c, ir_read);
+            storage_append(LOG_FILE_PATH, csv_line);
+            ESP_LOGI(TAG, "saving: '%s'", csv_line);
+        }
         ESP_LOGI(TAG, "INPUT frame: '%s'", buf);
-
-        // UNCOMMENT TO SAVE TO LOG FILE
-// storage_append(LOG_FILE_PATH,(const char *)buf); // save to file
         return 0;
     }
     return BLE_ATT_ERR_UNLIKELY;
@@ -152,6 +175,9 @@ static int input_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 // Commands:
 // 0x01 - start sending current.csv from beginning
 // 0x02 - delete current.csv
+// 0x03 - start calibration
+// 0x04 - start module calibration
+// 0x05 - stop module calibration and save
 static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                               struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
@@ -159,6 +185,7 @@ static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     {
         if (OS_MBUF_PKTLEN(ctxt->om) == 1)
         {
+            last_wake_time = esp_timer_get_time(); // update last wake time on input
             uint8_t cmd;
             os_mbuf_copydata(ctxt->om, 0, 1, &cmd);
             if (cmd == 0x01)
@@ -206,6 +233,7 @@ static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 static int file_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                                struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
+    last_wake_time = esp_timer_get_time(); // update last wake time on input
     ESP_LOGI(TAG, "FILE_CHAR access: conn=%u handle=%u op=%d",
              conn_handle, attr_handle, ctxt->op);
 
@@ -248,7 +276,7 @@ static const struct ble_gatt_svc_def gatt_svcs[] = {
             {
                 // NOTIFY_CHAR
                 .uuid = BLE_UUID16_DECLARE(CAL_NOTIFY_UUID_16),
-                .access_cb = gatt_access_access_cb,
+                .access_cb = gatt_access_cb,
                 .flags = BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_READ,
             },
             {0} // terminator
@@ -269,7 +297,17 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         if (event->connect.status == 0)
         {
             active_conns++;
-            ESP_LOGI(TAG, "Connected, now=%d connection(s)", active_conns);
+            uint16_t ch = event->connect.conn_handle;
+            ESP_LOGI(TAG, "Connected conn=%d, now=%d connection(s)", ch, active_conns);
+
+            struct ble_gap_upd_params params = {
+                .itvl_min = 200,           // 250ms
+                .itvl_max = 400,           // 500ms
+                .latency = 4,              // Pomijaj 4 okna
+                .supervision_timeout = 500 // 5s timeout
+            };
+            ble_gap_update_params(ch, &params);
+
             if (active_conns < MYNEWT_VAL(BLE_MAX_CONNECTIONS))
             {
                 start_advertising();
@@ -282,10 +320,14 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         }
         return ESP_OK;
     case BLE_GAP_EVENT_DISCONNECT:
-        active_conns--;
         if (active_conns < 0)
             active_conns = 0;
         ESP_LOGI(TAG, "Client disconnected; now %d connection(s)", active_conns);
+        uint16_t ch = event->connect.conn_handle;
+        if (ch < MAX_CONNS) {
+            conn_cal_handles[ch] = 0;
+            ESP_LOGI(TAG, "Cleared subscription for conn=%d", ch);
+        }
         start_advertising();
         return ESP_OK;
 
@@ -336,37 +378,92 @@ static void host_task(void *param)
 }
 
 
-int send_cal_notify(uint16_t conn_handle, const char* message) {
+int broadcast_cal_notify(uint16_t conn_handle, const char* message) {
    uint8_t buf[64];
     int len = snprintf((char*)buf, sizeof(buf), "%s", message);
     
-    struct os_mbuf *om = ble_hs_mbuf_att_pkt();
-    if (!om) {
-        ESP_LOGE(TAG, "mbuf alloc failed");
-        return BLE_HS_ENOMEM;
-    }
-    
-    int rc_append = os_mbuf_append(om, buf, len);
-    if (rc_append != 0) {
-        os_mbuf_free_chain(om);
-        return rc_append;
-    }
-    
-    int rc_notify = ble_gatts_notify_custom(conn_handle, cal_notify_handle, om);
-    ESP_LOGI(TAG, "CAL_NOTIFY: %s (rc=%d)", message, rc_notify);
-    return rc_notify;
-}
-void get_acceleremoter_from_buf(uint8_t *buf, size_t len, float *acc_xyz) {
-        int parsed = sscanf((const char *)buf, "%f,%f,%f", &acc_xyz[0], &acc_xyz[1], &acc_xyz[2]);
-        if (parsed != 3) {
-            ESP_LOGE(TAG, "Error parsing accelerometer data from buffer");
-            acc_xyz[0] = 0.0f;
-            acc_xyz[1] = 0.0f;
-            acc_xyz[2] = 0.0f;
-            return;
+    int success_count = 0;
+
+    for (int i = 0; i < MAX_CONNS; i++) {
+        uint16_t handle = conn_cal_handles[i];
+        
+        // Sprawdź czy handle jest valid (nie 0) i czy połączenie jest w ogóle aktywne (opcjonalnie)
+        if (handle != 0) {
+            // Alokuj mbuf DLA KAŻDEGO wysłania (nie można użyć jednego mbuf dla wielu wywołań notify_custom!)
+            struct os_mbuf *om = ble_hs_mbuf_att_pkt();
+            if (!om) {
+                ESP_LOGE(TAG, "mbuf alloc failed for conn=%d", i);
+                continue; 
+            }
+            os_mbuf_append(om, buf, len);
+            
+            int rc = ble_gatts_notify_custom(i, handle, om);
+            
+            if (rc == 0) {
+                ESP_LOGI(TAG, " BROADCAST to conn=%d: '%s' OK", i, message);
+                success_count++;
+            } else {
+                ESP_LOGW(TAG, "BROADCAST fail conn=%d rc=%d", i, rc);
+                 // Jeśli błąd to np. ENOTCONN, można wyzerować handle:
+                 if (rc == BLE_HS_ENOTCONN) conn_cal_handles[i] = 0;
+            }
         }
+    }
+    
+    return (success_count > 0) ? 0 : -1;
+}
+// void get_acceleremoter_from_buf(uint8_t *buf, size_t len, float *acc_xyz) {
+//         int parsed = sscanf((const char *)buf, "%f,%f,%f", &acc_xyz[0], &acc_xyz[1], &acc_xyz[2]);
+//         if (parsed != 3) {
+//             ESP_LOGE(TAG, "Error parsing accelerometer data from buffer");
+//             acc_xyz[0] = 0.0f;
+//             acc_xyz[1] = 0.0f;
+//             acc_xyz[2] = 0.0f;
+//             return;
+//         }
+// }
+
+static void power_management_init(void)
+{
+    esp_pm_config_t pm_config = {
+        .max_freq_mhz = 80,
+        .min_freq_mhz = 2,
+        .light_sleep_enable = true
+    };
+    ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
+    ESP_LOGI(TAG, "Power management initialized: Light Sleep ENABLED");
+}
+static void sleep_check_callback(TimerHandle_t xTimer) {
+    uint64_t now_ms = esp_timer_get_time() / 1000;
+    uint64_t idle_ms = now_ms - (last_wake_time / 1000);
+    
+    if (idle_ms > 5000) {
+        ESP_LOGI(TAG, "😴 Light Sleep ACTIVE (idle %llums)", idle_ms);
+    }
 }
 
+static void start_sleep_monitor(void) {
+    TimerHandle_t sleep_timer = xTimerCreate(
+        "sleep_check",              // Nazwa
+        pdMS_TO_TICKS(10000),       // 10s
+        pdTRUE,                     // Auto-reload
+        NULL,                       // ID
+        sleep_check_callback        // Callback
+    );
+    
+    // Sprawdź NULL bez int!
+    if (sleep_timer == NULL) {
+        ESP_LOGE(TAG, " Sleep timer creation FAILED");
+        return;
+    }
+    
+    if (xTimerStart(sleep_timer, 0) != pdPASS) {
+        ESP_LOGE(TAG, " Sleep timer start FAILED");
+        return;
+    }
+    
+    ESP_LOGI(TAG, "️ Sleep monitor started (10s)");
+}
 
 
 void app_main(void)
@@ -374,6 +471,10 @@ void app_main(void)
     esp_err_t ret = nvs_flash_init();
     if (ret != ESP_OK)
         ESP_LOGE(TAG, "nvs_flash_init failed: %d", ret);
+    memset(conn_cal_handles, 0, sizeof(conn_cal_handles));
+
+    // power_management_init();
+    // start_sleep_monitor();
 
     storage_init();
     calibration_init();
@@ -395,20 +496,18 @@ void app_main(void)
 
     nimble_port_freertos_init(host_task);
 
-    ESP_LOGI(TAG, "NimBLE log server started");
-    // tcrt5000_init();
+    tcrt5000_init();
 
+    ESP_LOGI(TAG, "NimBLE log server started");
     while (1)
     {
-        // storage_append();          // tu docelowo prawdziwe dane
-        // storage_dump_log_to_uart(); // testowo wypisz log do UART
-        vTaskDelay(pdMS_TO_TICKS(10000)); // testowo co 10 s
+    vTaskDelay(pdMS_TO_TICKS(1000)); // testowo co 10 s
     //test calibration
-    float test_tilts[] = {-13.0f, -12.5f, 0.0f, 20.0f};
-    for(int i = 0; i < 4; i++) {
-    float sg = calibrate_tilt_to_sg(test_tilts[i]);
-    ESP_LOGI("TEST", "Tilt=%.1f° → SG=%.3f, Plato=%.1f", test_tilts[i], sg, sg_to_plato(sg));
-    }
+    // float test_tilts[] = {-13.0f, -12.5f, 0.0f, 20.0f};
+    // for(int i = 0; i < 4; i++) {
+    // float sg = calibrate_tilt_to_sg(test_tilts[i]);
+    // ESP_LOGI("TEST", "Tilt=%.1f° → SG=%.3f, Plato=%.1f", test_tilts[i], sg, sg_to_plato(sg));
+    // }
     //end test calibration
     }
 }

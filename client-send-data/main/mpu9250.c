@@ -28,6 +28,7 @@ esp_err_t mpu9250_init(void)
         },
     };
 
+
     // 2. TWORZENIE BUS
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &i2c_bus));
     ESP_LOGI(TAG, "I2C bus created");
@@ -45,7 +46,6 @@ esp_err_t mpu9250_init(void)
 
     ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus, &dev_config, &i2c_dev));
     ESP_LOGI(TAG, "MPU9250 device added");
-
 
     uint8_t cmd[2];
 
@@ -80,11 +80,11 @@ esp_err_t mpu9250_init(void)
 
     // vTaskDelay(pdMS_TO_TICKS(1000));
 
-    // ret = i2c_master_receive(i2c_dev, &who_am_i, 1, 1000);
+    ret = i2c_master_receive(i2c_dev, &who_am_i, 1, 1000);
     // if (ret != ESP_OK)
     //     return ret;
 
-    // ESP_LOGI(TAG, "WHO_AM_I=0x%02X", who_am_i);
+    ESP_LOGI(TAG, "WHO_AM_I=0x%02X", who_am_i);
 
     // GY-9250 = 0x71, MPU6500 = 0x70
     if (who_am_i != 0x71 && who_am_i != 0x70)
@@ -109,15 +109,15 @@ esp_err_t read_accelerometer(mpu9250_accel_t *accel)
                                                 1000);        // timeout ms
     ESP_LOGD(TAG, "I2C transmit_receive result: %s", esp_err_to_name(ret));
 
-    if (ret == ESP_OK)
-    {
+    // if (ret == ESP_OK)
+    // {
         accel->accel_x = (int16_t)(raw_data[0] << 8 | raw_data[1]);
         accel->accel_y = (int16_t)(raw_data[2] << 8 | raw_data[3]);
         accel->accel_z = (int16_t)(raw_data[4] << 8 | raw_data[5]);
         ESP_LOGD(TAG, "Accel read: X=%d, Y=%d, Z=%d",
                  accel->accel_x, accel->accel_y, accel->accel_z);
         return ESP_OK;
-    }
+    // }
 
     accel->accel_x = accel->accel_y = accel->accel_z = 0;
     ESP_LOGE(TAG, "Accel read failed: %s", esp_err_to_name(ret));
