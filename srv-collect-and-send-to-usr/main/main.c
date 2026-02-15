@@ -23,6 +23,7 @@
 #include "storage.h"
 #include "tcrt5000.h"
 #include "calibration.h"
+#include "eink.h"
 
 // void get_acceleremoter_from_buf(uint8_t*, size_t, int*);
 
@@ -499,9 +500,11 @@ void app_main(void)
     tcrt5000_init();
 
     ESP_LOGI(TAG, "NimBLE log server started");
+    eink_demo_start();
     while (1)
     {
     vTaskDelay(pdMS_TO_TICKS(1000)); // testowo co 10 s
+    // vTaskDelay(pdMS_TO_TICKS(10000)); // testowo co 10 s
     //test calibration
     // float test_tilts[] = {-13.0f, -12.5f, 0.0f, 20.0f};
     // for(int i = 0; i < 4; i++) {
