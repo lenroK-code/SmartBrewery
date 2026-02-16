@@ -170,6 +170,7 @@ static int input_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                      sg, plato, temp_c, ir_read);
             storage_append(LOG_FILE_PATH, csv_line);
             ESP_LOGI(TAG, "saving: '%s'", csv_line);
+            eink_update_values(sg, plato, temp_c);
         }
         ESP_LOGI(TAG, "INPUT frame: '%s'", buf);
         return 0;
@@ -456,14 +457,14 @@ static void sleep_check_callback(TimerHandle_t xTimer)
 
     if (idle_ms > 5000)
     {
-        ESP_LOGI(TAG, "😴 Light Sleep ACTIVE (idle %llums)", idle_ms);
+        ESP_LOGI(TAG, "Light Sleep ACTIVE (idle %llums)", idle_ms);
     }
 }
 
 static void start_sleep_monitor(void)
 {
     TimerHandle_t sleep_timer = xTimerCreate(
-        "sleep_check",        // Nazwa
+        "sleep_check",        // Name
         pdMS_TO_TICKS(10000), // 10s
         pdTRUE,               // Auto-reload
         NULL,                 // ID
@@ -473,17 +474,17 @@ static void start_sleep_monitor(void)
     // Sprawdź NULL bez int!
     if (sleep_timer == NULL)
     {
-        ESP_LOGE(TAG, " Sleep timer creation FAILED");
+        ESP_LOGE(TAG, "Sleep timer creation FAILED");
         return;
     }
 
     if (xTimerStart(sleep_timer, 0) != pdPASS)
     {
-        ESP_LOGE(TAG, " Sleep timer start FAILED");
+        ESP_LOGE(TAG, "Sleep timer start FAILED");
         return;
     }
 
-    ESP_LOGI(TAG, "️ Sleep monitor started (10s)");
+    ESP_LOGI(TAG, "Sleep monitor started (10s)");
 }
 
 void app_main(void)
@@ -493,8 +494,8 @@ void app_main(void)
         ESP_LOGE(TAG, "nvs_flash_init failed: %d", ret);
     memset(conn_cal_handles, 0, sizeof(conn_cal_handles));
 
-    // power_management_init();
-    // start_sleep_monitor();
+    power_management_init();
+    start_sleep_monitor();
 
     storage_init();
     calibration_init();
@@ -524,7 +525,7 @@ void app_main(void)
     ESP_LOGI(TAG, "NimBLE log server started");
     screen_init();
     vTaskDelay(pdMS_TO_TICKS(1000)); // testowo co 10 s
-    eink_update_values(1.040f, 2.6f, 61.11f);
+    // eink_update_values(1.040f, 2.6f, 61.11f);
     while (1)
     {
         vTaskDelay(pdMS_TO_TICKS(1000)); // testowo co 10 s
