@@ -123,6 +123,7 @@ static const uint8_t font6x8[] = {
     0x00,0x00,0x7F,0x00,0x00,0x00, // |
     0x00,0x41,0x36,0x08,0x00,0x00, // }
     0x10,0x08,0x08,0x10,0x08,0x00, // ~
+    0x18,0x3C,0x3C,0x18,0x18,0x00, // st. (stopień)
     0x00,0x00,0x00,0x00,0x00,0x00  // DEL (pad)
 };
 
@@ -591,26 +592,26 @@ void eink_draw_text(int x, int y, const char* text)
     const unsigned char *p = (const unsigned char*)text;
     while (*p) {
         // handle UTF-8 degree symbol (0xC2 0xB0)
-        if (p[0] == 0xC2 && p[1] == 0xB0) {
-            // draw small hollow 3x3 circle at upper-right of glyph box
-            int cx0 = cx + 3; // start x of 3x3 box
-            int cy0 = y + 1;  // start y
-            for (int ry = 0; ry < 3; ++ry) {
-                for (int rx = 0; rx < 3; ++rx) {
-                    // hollow ring: draw border pixels only
-                    if (ry == 1 && rx == 1) continue;
-                    int px = cx0 + rx;
-                    int py = cy0 + ry;
-                    if (px < 0 || py < 0 || px >= g_width || py >= g_height) continue;
-                    int bi = py * bytes_per_line + (px / 8);
-                    int bbit = 7 - (px % 8);
-                    fb[bi] &= ~(1 << bbit);
-                }
-            }
-            p += 2;
-            cx += 6;
-            continue;
-        }
+        // if (p[0] == 0xC2 && p[1] == 0xB0) {
+        //     // draw small hollow 3x3 circle at upper-right of glyph box
+        //     int cx0 = cx + 3; // start x of 3x3 box
+        //     int cy0 = y + 1;  // start y
+        //     for (int ry = 0; ry < 3; ++ry) {
+        //         for (int rx = 0; rx < 3; ++rx) {
+        //             // hollow ring: draw border pixels only
+        //             if (ry == 1 && rx == 1) continue;
+        //             int px = cx0 + rx;
+        //             int py = cy0 + ry;
+        //             if (px < 0 || py < 0 || px >= g_width || py >= g_height) continue;
+        //             int bi = py * bytes_per_line + (px / 8);
+        //             int bbit = 7 - (px % 8);
+        //             fb[bi] &= ~(1 << bbit);
+        //         }
+        //     }
+        //     p += 2;
+        //     cx += 6;
+        //     continue;
+        // }
         unsigned char c = *p++;
         if (c < 32 || c > 127) c = '?';
         const uint8_t *glyph = &font6x8[(c - 32) * 6];
@@ -625,7 +626,8 @@ void eink_draw_text(int x, int y, const char* text)
                 int bit = 7 - (px % 8);
                 if (coldata & (1 << row)) {
                     fb[byte_index] &= ~(1 << bit); // black pixel
-                }
+ 
+               }
             }
         }
         cx += 6; // glyph width
@@ -652,27 +654,27 @@ void eink_draw_text_scaled(int x, int y, const char* text, int scale)
     const unsigned char *p = (const unsigned char*)text;
     while (*p) {
         // UTF-8 degree symbol handling
-        if (p[0] == 0xC2 && p[1] == 0xB0) {
-            // scaled hollow circle: draw a hollow box of size (max(3,scale))
-            int box = scale < 3 ? 3 : scale;
-            int cx0 = cx + 6*scale - (box + 1);
-            int cy0 = y + 1;
-            for (int ry = 0; ry < box; ++ry) {
-                for (int rx = 0; rx < box; ++rx) {
-                    if (ry == box/2 && rx == box/2) continue; // keep center empty for hollow look
-                    if (ry > 0 && ry < box-1 && rx > 0 && rx < box-1) continue;
-                    int px = cx0 + rx;
-                    int py = cy0 + ry;
-                    if (px < 0 || py < 0 || px >= g_width || py >= g_height) continue;
-                    int bi = py * bytes_per_line + (px / 8);
-                    int bbit = 7 - (px % 8);
-                    fb[bi] &= ~(1 << bbit);
-                }
-            }
-            p += 2;
-            cx += 6 * scale;
-            continue;
-        }
+        // if (p[0] == 0xC2 && p[1] == 0xB0) {
+        //     // scaled hollow circle: draw a hollow box of size (max(3,scale))
+        //     int box = scale < 3 ? 3 : scale;
+        //     int cx0 = cx + 6*scale - (box + 1);
+        //     int cy0 = y + 1;
+        //     for (int ry = 0; ry < box; ++ry) {
+        //         for (int rx = 0; rx < box; ++rx) {
+        //             if (ry == box/2 && rx == box/2) continue; // keep center empty for hollow look
+        //             if (ry > 0 && ry < box-1 && rx > 0 && rx < box-1) continue;
+        //             int px = cx0 + rx;
+        //             int py = cy0 + ry;
+        //             if (px < 0 || py < 0 || px >= g_width || py >= g_height) continue;
+        //             int bi = py * bytes_per_line + (px / 8);
+        //             int bbit = 7 - (px % 8);
+        //             fb[bi] &= ~(1 << bbit);
+        //         }
+        //     }
+        //     p += 2;
+        //     cx += 6 * scale;
+        //     continue;
+        // }
         unsigned char c = *p++;
         if (c < 32 || c > 127) c = '?';
         const uint8_t *glyph = &font6x8[(c - 32) * 6];
@@ -723,27 +725,6 @@ void eink_draw_lines_scaled(int x, int y, const char** lines, int n_lines, int s
         int cx = x;
         const unsigned char *p = (const unsigned char*)text;
         while (*p) {
-            // UTF-8 degree symbol handling
-            if (p[0] == 0xC2 && p[1] == 0xB0) {
-                int box = scale < 3 ? 3 : scale;
-                int cx0 = cx + 6*scale - (box + 1);
-                int cy0 = line_y + 1;
-                for (int ry = 0; ry < box; ++ry) {
-                    for (int rx = 0; rx < box; ++rx) {
-                        if (ry == box/2 && rx == box/2) continue;
-                        if (ry > 0 && ry < box-1 && rx > 0 && rx < box-1) continue;
-                        int px = cx0 + rx;
-                        int py = cy0 + ry;
-                        if (px < 0 || py < 0 || px >= g_width || py >= g_height) continue;
-                        int bi = py * bytes_per_line + (px / 8);
-                        int bbit = 7 - (px % 8);
-                        fb[bi] &= ~(1 << bbit);
-                    }
-                }
-                p += 2;
-                cx += 6 * scale;
-                continue;
-            }
             unsigned char c = *p++;
             if (c < 32 || c > 127) c = '?';
             const uint8_t *glyph = &font6x8[(c - 32) * 6];

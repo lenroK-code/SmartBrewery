@@ -15,5 +15,3 @@ dependencies:
   #   # All dependencies of `main` are public by default.
   #   public: true
   espressif/ds18b20: ^0.2.0
-  dannys42/waveshare-epd: ^0.0.3
-  dannys42/waveshare-epd-1in54v2: ^0.0.3
