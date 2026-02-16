@@ -17,15 +17,14 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
-#include "esp_pm.h"           // Power Management
-#include "esp_sleep.h"        // Sleep API
+#include "esp_pm.h"    // Power Management
+#include "esp_sleep.h" // Sleep API
 
 #include "storage.h"
 #include "tcrt5000.h"
 #include "calibration.h"
 // #include "eink_driver.h"
 #include "eink.h"
-
 
 // void get_acceleremoter_from_buf(uint8_t*, size_t, int*);
 
@@ -38,16 +37,14 @@ static const char *TAG = "NIMBLE_SERVER";
 #define CAL_NOTIFY_UUID_16 0x1004
 
 #define FILE_CHUNK_SIZE 250
-#define LOG_FILE_PATH "/spiflash/current.csv" 
+#define LOG_FILE_PATH "/spiflash/current.csv"
 
 #define MAX_CONNS 3
 
-static uint8_t own_addr_type; 
+static uint8_t own_addr_type;
 static FILE *s_file = NULL;
-static uint16_t conn_cal_handles[MAX_CONNS];  // per connection notify handles
+static uint16_t conn_cal_handles[MAX_CONNS]; // per connection notify handles
 static uint64_t last_wake_time = 0;
-
-
 
 //-----------------------------------
 // DEBUG function: prints first N bytes of log file to ESP log
@@ -66,7 +63,6 @@ static uint64_t last_wake_time = 0;
 //     fclose(f);
 // }
 //-----------------------------------
-
 
 static void snapshot_open_for_read(void)
 {
@@ -106,14 +102,19 @@ static int gatt_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 {
     ESP_LOGI(TAG, "CAL_NOTIFY access: op=%d handle=0x%04x", ctxt->op, attr_handle);
 
-    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-           if (attr_handle == 0x0016) {
-             if (conn_handle < MAX_CONNS) {
+    if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR)
+    {
+        if (attr_handle == 0x0016)
+        {
+            if (conn_handle < MAX_CONNS)
+            {
                 conn_cal_handles[conn_handle] = attr_handle;
                 ESP_LOGI(TAG, "conn=%d SUBSCRIBED handle=0x%04x", conn_handle, attr_handle);
-             } else {
-                 ESP_LOGW(TAG, "Conn handle %d out of bounds!", conn_handle);
-             }
+            }
+            else
+            {
+                ESP_LOGW(TAG, "Conn handle %d out of bounds!", conn_handle);
+            }
         }
     }
     return ESP_OK;
@@ -153,18 +154,20 @@ static int input_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         float sg = calibrate_tilt_to_sg(tilt);
         float plato = sg_to_plato(sg);
 
-
         ESP_LOGI(TAG, "Raw: X=%d Y=%d Z=%d T=%.1f°C IR=%d",
                  acc_xyz[0], acc_xyz[1], acc_xyz[2], temp_c, ir_read);
         ESP_LOGI(TAG, "SG=%.3f Plato=%.1f Tilt=%.2f", sg, plato, tilt);
 
-        if (calibrate_get_state() == CAL_STATE_MEASURING) {
+        if (calibrate_get_state() == CAL_STATE_MEASURING)
+        {
             measurement_add_sample(tilt); // add calibration sample
-        } else if (calibrate_get_state() == CAL_STATE_IDLE||calibrate_get_state() == CAL_STATE_DONE) {
+        }
+        else if (calibrate_get_state() == CAL_STATE_IDLE || calibrate_get_state() == CAL_STATE_DONE)
+        {
             // save to log file
             char csv_line[64];
             snprintf(csv_line, sizeof(csv_line), "%.3f,%.1f,%.1f,%d\n",
-                    sg, plato, temp_c, ir_read);
+                     sg, plato, temp_c, ir_read);
             storage_append(LOG_FILE_PATH, csv_line);
             ESP_LOGI(TAG, "saving: '%s'", csv_line);
         }
@@ -196,8 +199,8 @@ static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 // start sending current.csv from beginning
                 // if (s_file)
                 // {
-                    snapshot_open_for_read();
-                    ESP_LOGI(TAG, "CMD 0x01: start transfer current.csv");
+                snapshot_open_for_read();
+                ESP_LOGI(TAG, "CMD 0x01: start transfer current.csv");
                 // }
                 // s_file = storage_open_log_for_read(LOG_FILE_PATH);
             }
@@ -212,17 +215,20 @@ static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 storage_delete_log(LOG_FILE_PATH);
                 ESP_LOGI(TAG, "CMD 0x02: delete current.csv");
             }
-             // *** Calibration ***
-            else if (cmd == 0x03) {
+            // *** Calibration ***
+            else if (cmd == 0x03)
+            {
                 calibrate_start(conn_handle);
                 return ESP_OK;
             }
-            else if (cmd == 0x04 && calibrate_is_ready_for_module_start()) {
+            else if (cmd == 0x04 && calibrate_is_ready_for_module_start())
+            {
                 calibrate_module_start();
                 return ESP_OK;
             }
-            else if (cmd == 0x05 && calibrate_is_ready_for_save()) {
-                    calibrate_module_stop(conn_handle);
+            else if (cmd == 0x05 && calibrate_is_ready_for_save())
+            {
+                calibrate_module_stop(conn_handle);
                 return ESP_OK;
             }
         }
@@ -327,7 +333,8 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             active_conns = 0;
         ESP_LOGI(TAG, "Client disconnected; now %d connection(s)", active_conns);
         uint16_t ch = event->connect.conn_handle;
-        if (ch < MAX_CONNS) {
+        if (ch < MAX_CONNS)
+        {
             conn_cal_handles[ch] = 0;
             ESP_LOGI(TAG, "Cleared subscription for conn=%d", ch);
         }
@@ -380,39 +387,46 @@ static void host_task(void *param)
     nimble_port_freertos_deinit();
 }
 
+int broadcast_cal_notify(uint16_t conn_handle, const char *message)
+{
+    uint8_t buf[64];
+    int len = snprintf((char *)buf, sizeof(buf), "%s", message);
 
-int broadcast_cal_notify(uint16_t conn_handle, const char* message) {
-   uint8_t buf[64];
-    int len = snprintf((char*)buf, sizeof(buf), "%s", message);
-    
     int success_count = 0;
 
-    for (int i = 0; i < MAX_CONNS; i++) {
+    for (int i = 0; i < MAX_CONNS; i++)
+    {
         uint16_t handle = conn_cal_handles[i];
-        
+
         // Sprawdź czy handle jest valid (nie 0) i czy połączenie jest w ogóle aktywne (opcjonalnie)
-        if (handle != 0) {
+        if (handle != 0)
+        {
             // Alokuj mbuf DLA KAŻDEGO wysłania (nie można użyć jednego mbuf dla wielu wywołań notify_custom!)
             struct os_mbuf *om = ble_hs_mbuf_att_pkt();
-            if (!om) {
+            if (!om)
+            {
                 ESP_LOGE(TAG, "mbuf alloc failed for conn=%d", i);
-                continue; 
+                continue;
             }
             os_mbuf_append(om, buf, len);
-            
+
             int rc = ble_gatts_notify_custom(i, handle, om);
-            
-            if (rc == 0) {
+
+            if (rc == 0)
+            {
                 ESP_LOGI(TAG, " BROADCAST to conn=%d: '%s' OK", i, message);
                 success_count++;
-            } else {
+            }
+            else
+            {
                 ESP_LOGW(TAG, "BROADCAST fail conn=%d rc=%d", i, rc);
-                 // Jeśli błąd to np. ENOTCONN, można wyzerować handle:
-                 if (rc == BLE_HS_ENOTCONN) conn_cal_handles[i] = 0;
+                // Jeśli błąd to np. ENOTCONN, można wyzerować handle:
+                if (rc == BLE_HS_ENOTCONN)
+                    conn_cal_handles[i] = 0;
             }
         }
     }
-    
+
     return (success_count > 0) ? 0 : -1;
 }
 // void get_acceleremoter_from_buf(uint8_t *buf, size_t len, float *acc_xyz) {
@@ -431,43 +445,46 @@ static void power_management_init(void)
     esp_pm_config_t pm_config = {
         .max_freq_mhz = 80,
         .min_freq_mhz = 2,
-        .light_sleep_enable = true
-    };
+        .light_sleep_enable = true};
     ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
     ESP_LOGI(TAG, "Power management initialized: Light Sleep ENABLED");
 }
-static void sleep_check_callback(TimerHandle_t xTimer) {
+static void sleep_check_callback(TimerHandle_t xTimer)
+{
     uint64_t now_ms = esp_timer_get_time() / 1000;
     uint64_t idle_ms = now_ms - (last_wake_time / 1000);
-    
-    if (idle_ms > 5000) {
+
+    if (idle_ms > 5000)
+    {
         ESP_LOGI(TAG, "😴 Light Sleep ACTIVE (idle %llums)", idle_ms);
     }
 }
 
-static void start_sleep_monitor(void) {
+static void start_sleep_monitor(void)
+{
     TimerHandle_t sleep_timer = xTimerCreate(
-        "sleep_check",              // Nazwa
-        pdMS_TO_TICKS(10000),       // 10s
-        pdTRUE,                     // Auto-reload
-        NULL,                       // ID
-        sleep_check_callback        // Callback
+        "sleep_check",        // Nazwa
+        pdMS_TO_TICKS(10000), // 10s
+        pdTRUE,               // Auto-reload
+        NULL,                 // ID
+        sleep_check_callback  // Callback
     );
-    
+
     // Sprawdź NULL bez int!
-    if (sleep_timer == NULL) {
+    if (sleep_timer == NULL)
+    {
         ESP_LOGE(TAG, " Sleep timer creation FAILED");
         return;
     }
-    
-    if (xTimerStart(sleep_timer, 0) != pdPASS) {
+
+    if (xTimerStart(sleep_timer, 0) != pdPASS)
+    {
         ESP_LOGE(TAG, " Sleep timer start FAILED");
         return;
     }
-    
+
     ESP_LOGI(TAG, "️ Sleep monitor started (10s)");
 }
-
 
 void app_main(void)
 {
@@ -482,9 +499,12 @@ void app_main(void)
     storage_init();
     calibration_init();
 
-    if(calibration_is_loaded()) {
+    if (calibration_is_loaded())
+    {
         ESP_LOGI(TAG, "Kalibracja z NVS aktywna!");
-    } else {
+    }
+    else
+    {
         ESP_LOGI(TAG, "Brak kalibracji - nowa");
     }
 
@@ -502,19 +522,19 @@ void app_main(void)
     tcrt5000_init();
 
     ESP_LOGI(TAG, "NimBLE log server started");
-    eink_demo();
+    screen_init();
     vTaskDelay(pdMS_TO_TICKS(1000)); // testowo co 10 s
-    eink_update_values(1.043f, 2.4f, 31.8f);
+    eink_update_values(1.040f, 2.6f, 61.11f);
     while (1)
     {
-    vTaskDelay(pdMS_TO_TICKS(1000)); // testowo co 10 s
-    // vTaskDelay(pdMS_TO_TICKS(10000)); // testowo co 10 s
-    //test calibration
-    // float test_tilts[] = {-13.0f, -12.5f, 0.0f, 20.0f};
-    // for(int i = 0; i < 4; i++) {
-    // float sg = calibrate_tilt_to_sg(test_tilts[i]);
-    // ESP_LOGI("TEST", "Tilt=%.1f° → SG=%.3f, Plato=%.1f", test_tilts[i], sg, sg_to_plato(sg));
-    // }
-    //end test calibration
+        vTaskDelay(pdMS_TO_TICKS(1000)); // testowo co 10 s
+        // vTaskDelay(pdMS_TO_TICKS(10000)); // testowo co 10 s
+        // test calibration
+        // float test_tilts[] = {-13.0f, -12.5f, 0.0f, 20.0f};
+        // for(int i = 0; i < 4; i++) {
+        // float sg = calibrate_tilt_to_sg(test_tilts[i]);
+        // ESP_LOGI("TEST", "Tilt=%.1f° → SG=%.3f, Plato=%.1f", test_tilts[i], sg, sg_to_plato(sg));
+        // }
+        // end test calibration
     }
 }
