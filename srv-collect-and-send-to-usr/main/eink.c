@@ -13,7 +13,6 @@ void screen_init(void)
 	ESP_LOGI(TAG, "Initializing e-ink driver");
 	eink_init(SPI2_HOST, 4, 6, -1, 7, 1, 2, 3, 200, 200);
 	vTaskDelay(pdMS_TO_TICKS(2000));
-	ESP_LOGI(TAG, "Setting rotation to 90 degrees");
 	eink_set_rotation(90);
 }
 

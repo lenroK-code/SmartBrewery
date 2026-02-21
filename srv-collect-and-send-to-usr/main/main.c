@@ -44,7 +44,6 @@ static const char *TAG = "NIMBLE_SERVER";
 static uint8_t own_addr_type;
 static FILE *s_file = NULL;
 static uint16_t conn_cal_handles[MAX_CONNS]; // per connection notify handles
-static uint64_t last_wake_time = 0;
 
 //-----------------------------------
 // DEBUG function: prints first N bytes of log file to ESP log
@@ -130,14 +129,13 @@ static int input_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR)
     {
-        last_wake_time = esp_timer_get_time(); // update last wake time on input
         uint8_t buf[256];
-        if (len >= (int)sizeof(buf) - 32) // Więcej miejsca na logi
+        if (len >= (int)sizeof(buf) - 32) // More space for logs
             len = sizeof(buf) - 32;
         os_mbuf_copydata(ctxt->om, 0, len, buf);
-        buf[len] = '\0'; // WAŻNE! Null-terminate dla sscanf
+        buf[len] = '\0'; // Null-terminate for sscanf
 
-        // PARSUJ: accelX,Y,Z,temp (4 pola!)
+        // PARSE: accelX,Y,Z,temp
         int acc_xyz[3];
         float temp_c;
         if (sscanf((const char *)buf, "%d,%d,%d,%f",
@@ -171,9 +169,39 @@ static int input_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             storage_append(LOG_FILE_PATH, csv_line);
             ESP_LOGI(TAG, "saving: '%s'", csv_line);
             eink_update_values(sg, plato, temp_c);
+            uint32_t wakeup_case = esp_sleep_get_wakeup_causes();
+            if (wakeup_case & BIT(ESP_SLEEP_WAKEUP_TIMER))
+            {
+                ESP_LOGI(TAG, "Wakeup cause: TIMER");
+            }
+            else if (wakeup_case & BIT(ESP_SLEEP_WAKEUP_GPIO))
+            {
+                ESP_LOGI(TAG, "Wakeup cause: GPIO");
+            }
+            else if (wakeup_case & BIT(ESP_SLEEP_WAKEUP_UART))
+            {
+                ESP_LOGI(TAG, "Wakeup cause: UART");
+            }
+            else if (wakeup_case & BIT(ESP_SLEEP_WAKEUP_BT))
+            {
+                ESP_LOGI(TAG, "Wakeup cause: Bluetooth");
+            }
+            else if (wakeup_case & BIT(ESP_SLEEP_WAKEUP_WIFI))
+            {
+                ESP_LOGI(TAG, "Wakeup cause: WiFi");
+            }
+            else if (wakeup_case & BIT(ESP_SLEEP_WAKEUP_ALL))
+            {
+                ESP_LOGI(TAG, "Wakeup cause: ALL");
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Wakeup cause: UNDEFINED");
+            }
+            ESP_LOGI(TAG, "INPUT frame: '%s'", buf);
+            return 0;
         }
-        ESP_LOGI(TAG, "INPUT frame: '%s'", buf);
-        return 0;
+        return BLE_ATT_ERR_UNLIKELY;
     }
     return BLE_ATT_ERR_UNLIKELY;
 }
@@ -192,7 +220,6 @@ static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
     {
         if (OS_MBUF_PKTLEN(ctxt->om) == 1)
         {
-            last_wake_time = esp_timer_get_time(); // update last wake time on input
             uint8_t cmd;
             os_mbuf_copydata(ctxt->om, 0, 1, &cmd);
             if (cmd == 0x01)
@@ -243,7 +270,6 @@ static int cmd_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 static int file_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
                                struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    last_wake_time = esp_timer_get_time(); // update last wake time on input
     ESP_LOGI(TAG, "FILE_CHAR access: conn=%u handle=%u op=%d",
              conn_handle, attr_handle, ctxt->op);
 
@@ -313,7 +339,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             struct ble_gap_upd_params params = {
                 .itvl_min = 200,           // 250ms
                 .itvl_max = 400,           // 500ms
-                .latency = 4,              // Pomijaj 4 okna
+                .latency = 4,              // Skip 4 intervals → 1s-2s effective interval
                 .supervision_timeout = 500 // 5s timeout
             };
             ble_gap_update_params(ch, &params);
@@ -399,10 +425,10 @@ int broadcast_cal_notify(uint16_t conn_handle, const char *message)
     {
         uint16_t handle = conn_cal_handles[i];
 
-        // Sprawdź czy handle jest valid (nie 0) i czy połączenie jest w ogóle aktywne (opcjonalnie)
+        // Check if handle is valid (non-zero) and optionally if connection is active
         if (handle != 0)
         {
-            // Alokuj mbuf DLA KAŻDEGO wysłania (nie można użyć jednego mbuf dla wielu wywołań notify_custom!)
+            // Allocate a new mbuf for each notify_custom call (cannot reuse one mbuf for multiple notify_custom calls!)
             struct os_mbuf *om = ble_hs_mbuf_att_pkt();
             if (!om)
             {
@@ -421,7 +447,7 @@ int broadcast_cal_notify(uint16_t conn_handle, const char *message)
             else
             {
                 ESP_LOGW(TAG, "BROADCAST fail conn=%d rc=%d", i, rc);
-                // Jeśli błąd to np. ENOTCONN, można wyzerować handle:
+                // If error is e.g. ENOTCONN, we can clear the handle:
                 if (rc == BLE_HS_ENOTCONN)
                     conn_cal_handles[i] = 0;
             }
@@ -430,16 +456,6 @@ int broadcast_cal_notify(uint16_t conn_handle, const char *message)
 
     return (success_count > 0) ? 0 : -1;
 }
-// void get_acceleremoter_from_buf(uint8_t *buf, size_t len, float *acc_xyz) {
-//         int parsed = sscanf((const char *)buf, "%f,%f,%f", &acc_xyz[0], &acc_xyz[1], &acc_xyz[2]);
-//         if (parsed != 3) {
-//             ESP_LOGE(TAG, "Error parsing accelerometer data from buffer");
-//             acc_xyz[0] = 0.0f;
-//             acc_xyz[1] = 0.0f;
-//             acc_xyz[2] = 0.0f;
-//             return;
-//         }
-// }
 
 static void power_management_init(void)
 {
@@ -447,44 +463,16 @@ static void power_management_init(void)
         .max_freq_mhz = 80,
         .min_freq_mhz = 2,
         .light_sleep_enable = true};
-    ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
-    ESP_LOGI(TAG, "Power management initialized: Light Sleep ENABLED");
-}
-static void sleep_check_callback(TimerHandle_t xTimer)
-{
-    uint64_t now_ms = esp_timer_get_time() / 1000;
-    uint64_t idle_ms = now_ms - (last_wake_time / 1000);
-
-    if (idle_ms > 5000)
+    esp_err_t rc = esp_pm_configure(&pm_config);
+    if (rc == ESP_ERR_NOT_SUPPORTED)
     {
-        ESP_LOGI(TAG, "Light Sleep ACTIVE (idle %llums)", idle_ms);
+        ESP_LOGW(TAG, "Power management not supported in this configuration; continuing without PM");
     }
-}
-
-static void start_sleep_monitor(void)
-{
-    TimerHandle_t sleep_timer = xTimerCreate(
-        "sleep_check",        // Name
-        pdMS_TO_TICKS(10000), // 10s
-        pdTRUE,               // Auto-reload
-        NULL,                 // ID
-        sleep_check_callback  // Callback
-    );
-
-    // Sprawdź NULL bez int!
-    if (sleep_timer == NULL)
+    else
     {
-        ESP_LOGE(TAG, "Sleep timer creation FAILED");
-        return;
+        ESP_ERROR_CHECK(rc);
+        ESP_LOGI(TAG, "Power management initialized: Light Sleep ENABLED");
     }
-
-    if (xTimerStart(sleep_timer, 0) != pdPASS)
-    {
-        ESP_LOGE(TAG, "Sleep timer start FAILED");
-        return;
-    }
-
-    ESP_LOGI(TAG, "Sleep monitor started (10s)");
 }
 
 void app_main(void)
@@ -495,7 +483,11 @@ void app_main(void)
     memset(conn_cal_handles, 0, sizeof(conn_cal_handles));
 
     power_management_init();
-    start_sleep_monitor();
+
+    // note for the future
+    // Standard FreeRTOS wakes up every "tick" (e.g., every 10ms) to increment the system clock and check for tasks.
+    // Without Tickless: The CPU wakes up 100 times a second even if doing nothing. This destroys power savings.
+    // With Tickless: If the next task is scheduled for 500ms from now, FreeRTOS stops the periodic tick interrupt, sets a hardware timer for 500ms, and goes to sleep for the entire duration. This is essential for "Modem Sleep" where the radio is off for specific intervals between Bluetooth events.
 
     storage_init();
     calibration_init();
@@ -524,17 +516,16 @@ void app_main(void)
 
     ESP_LOGI(TAG, "NimBLE log server started");
     screen_init();
-    vTaskDelay(pdMS_TO_TICKS(1000)); // testowo co 10 s
-    // eink_update_values(1.040f, 2.6f, 61.11f);
+
     while (1)
     {
-        vTaskDelay(pdMS_TO_TICKS(1000)); // testowo co 10 s
-        // vTaskDelay(pdMS_TO_TICKS(10000)); // testowo co 10 s
+        vTaskDelay(pdMS_TO_TICKS(1000)); // testowo co 1 s
         // test calibration
         // float test_tilts[] = {-13.0f, -12.5f, 0.0f, 20.0f};
-        // for(int i = 0; i < 4; i++) {
-        // float sg = calibrate_tilt_to_sg(test_tilts[i]);
-        // ESP_LOGI("TEST", "Tilt=%.1f° → SG=%.3f, Plato=%.1f", test_tilts[i], sg, sg_to_plato(sg));
+        // for (int i = 0; i < 4; i++)
+        // {
+        //     float sg = calibrate_tilt_to_sg(test_tilts[i]);
+        //     ESP_LOGI("TEST", "Tilt=%.1f° → SG=%.3f, Plato=%.1f", test_tilts[i], sg, sg_to_plato(sg));
         // }
         // end test calibration
     }

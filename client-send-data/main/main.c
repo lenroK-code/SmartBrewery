@@ -6,6 +6,7 @@
 
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "esp_sleep.h"
 
 #include "esp_nimble_hci.h"
 #include "nimble/nimble_port.h"
@@ -26,7 +27,6 @@ static const char *TAG = "NIMBLE_CLIENT";
 #define SVC_UUID_16 0x1000
 #define CMD_CHAR_UUID_16 0x1001
 
-
 static uint8_t own_addr_type;
 static uint16_t conn_handle = BLE_HS_CONN_HANDLE_NONE;
 
@@ -34,15 +34,17 @@ static bool cal_mode = false;
 static const int normal_delay_ms = 5000;
 static const int cal_delay_ms = 10;
 
+const uint64_t uS_TO_S_FACTOR = 1000000ULL;
+// const uint64_t TIME_TO_SLEEP = 120; // how many seconds to sleep for
+const uint64_t TIME_TO_SLEEP = 60; // how many seconds to sleep for
+
 // static uint16_t notify_char_handle = 0;
 
-
-// USTAW TE DWIE WARTOŚCI POD SERWER:
-#define CMD_CHAR_HANDLE 0x0025   // handle CMD_CHAR na serwerze
-#define INPUT_CHAR_HANDLE 0x0014 // handle FILE_DATA_CHAR na serwerze
+// SET THESE TWO VALUES TO MATCH YOUR SERVER:
+#define CMD_CHAR_HANDLE 0x0025        // handle CMD_CHAR na serwerze
+#define INPUT_CHAR_HANDLE 0x0014      // handle FILE_DATA_CHAR na serwerze
 #define CAL_NOTIFY_CHAR_HANDLE 0x0016 // handle FILE_DATA_CHAR na serwerze
 
-// prosty parser nazwy
 static void parse_adv_name(const uint8_t *data, uint8_t length_data,
                            char *out_name, size_t out_len)
 {
@@ -64,16 +66,19 @@ static void parse_adv_name(const uint8_t *data, uint8_t length_data,
     }
 }
 
-static int cccd_write_cb(uint16_t conn_handle, const struct ble_gatt_error *error, struct ble_gatt_attr *attr, void *arg) {
-    if (error->status == 0) {
+static int cccd_write_cb(uint16_t conn_handle, const struct ble_gatt_error *error, struct ble_gatt_attr *attr, void *arg)
+{
+    if (error->status == 0)
+    {
         ESP_LOGI(TAG, "CCCD enabled successfully for notify! (handle=0x%04x)", attr ? attr->handle : 0);
-    } else {
+    }
+    else
+    {
         ESP_LOGE(TAG, "CCCD write FAILED! status=%d handle=0x%04x - check server CCCD perms/handle",
                  error->status, CAL_NOTIFY_CHAR_HANDLE + 1);
     }
     return error->status;
 }
-
 
 static void start_scan(void);
 
@@ -195,7 +200,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
     }
 
     default:
-    ESP_LOGI(TAG, "GAP event=%d", event->type);  // POKAŻ WSZYSTKIE eventy!
+        ESP_LOGI(TAG, "GAP event=%d", event->type); // Show unhandled events for debugging
         return 0;
     }
 }
@@ -241,7 +246,8 @@ static void host_task(void *param)
 void app_main(void)
 {
     esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
+    {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ret = nvs_flash_init();
     }
@@ -264,8 +270,6 @@ void app_main(void)
         // return;
     }
 
-    // tcrt5000_init();
-
     ret = temp_init();
     if (ret != ESP_OK)
     {
@@ -276,25 +280,30 @@ void app_main(void)
     mpu9250_accel_t accel;
     while (1)
     {
-        // int ir_detected = tcrt5000_read(); // 1 - wykryto, 0 - nie wykryto wody w zbiorniku
-
-        if (ESP_OK == read_accelerometer(&accel))
+        for (uint8_t num_of_reads = 0; num_of_reads < 5; num_of_reads++)
         {
-            ESP_LOGI(TAG, "Accel X: %d, Y: %d, Z: %d",
-                     accel.accel_x, accel.accel_y, accel.accel_z);
+            if (ESP_OK == read_accelerometer(&accel))
+            {
+                ESP_LOGI(TAG, "Accel X: %d, Y: %d, Z: %d",
+                         accel.accel_x, accel.accel_y, accel.accel_z);
+            }
+            int16_t accel_x = accel.accel_x;
+            int16_t accel_y = accel.accel_y;
+            int16_t accel_z = accel.accel_z;
+
+            float temp = temp_read() - 4.5f; // read temperature from DS18B20 and apply correction of 4.5 degrees
+
+            send_frame(accel_x, accel_y, accel_z, temp); // send data to server
+            ESP_LOGI(TAG, "Temp: %.1f C", temp);
+            int delay_ms = cal_mode ? cal_delay_ms : normal_delay_ms;
+            ESP_LOGI(TAG, "DELAY: %d ms", delay_ms);
+            vTaskDelay(pdMS_TO_TICKS(delay_ms));
         }
-        read_accelerometer(&accel); // Odczytaj dane akcelerometru
-        int16_t accel_x = accel.accel_x;
-        int16_t accel_y = accel.accel_y;
-        int16_t accel_z = accel.accel_z;
-
-        float temp = temp_read() -4.5f; // Odczytaj temperaturę z DS18B20
-
-        // WYŚLIJ RAMKĘ
-        send_frame(accel_x, accel_y, accel_z, temp); // Korekta o 4.5 stopnia
-        ESP_LOGI(TAG, "Temp: %.1f C", temp); 
-        int delay_ms = cal_mode ? cal_delay_ms : normal_delay_ms;
-        ESP_LOGI(TAG, "DELAY: %d ms", delay_ms);
-        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        if (!cal_mode)
+        {
+            ESP_LOGI(TAG, "Entering deep sleep for %d seconds...", TIME_TO_SLEEP);
+            esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+            esp_deep_sleep_start();
+        }
     }
 }
