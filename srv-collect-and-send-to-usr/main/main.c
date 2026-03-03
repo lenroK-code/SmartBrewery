@@ -152,7 +152,7 @@ static int input_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         float sg = calibrate_tilt_to_sg(tilt);
         float plato = sg_to_plato(sg);
 
-        ESP_LOGI(TAG, "Raw: X=%d Y=%d Z=%d T=%.1f°C IR=%d",
+        ESP_LOGI(TAG, "Raw: X=%d Y=%d Z=%d T=%.1fC IR=%d",
                  acc_xyz[0], acc_xyz[1], acc_xyz[2], temp_c, ir_read);
         ESP_LOGI(TAG, "SG=%.3f Plato=%.1f Tilt=%.2f", sg, plato, tilt);
 
@@ -164,40 +164,11 @@ static int input_char_access_cb(uint16_t conn_handle, uint16_t attr_handle,
         {
             // save to log file
             char csv_line[64];
-            snprintf(csv_line, sizeof(csv_line), "%.3f,%.1f,%.1f,%d\n",
+            snprintf(csv_line, sizeof(csv_line), "%.3f,%.1f,%.1f,%d",
                      sg, plato, temp_c, ir_read);
             storage_append(LOG_FILE_PATH, csv_line);
             ESP_LOGI(TAG, "saving: '%s'", csv_line);
             eink_update_values(sg, plato, temp_c);
-            uint32_t wakeup_case = esp_sleep_get_wakeup_causes();
-            if (wakeup_case & BIT(ESP_SLEEP_WAKEUP_TIMER))
-            {
-                ESP_LOGI(TAG, "Wakeup cause: TIMER");
-            }
-            else if (wakeup_case & BIT(ESP_SLEEP_WAKEUP_GPIO))
-            {
-                ESP_LOGI(TAG, "Wakeup cause: GPIO");
-            }
-            else if (wakeup_case & BIT(ESP_SLEEP_WAKEUP_UART))
-            {
-                ESP_LOGI(TAG, "Wakeup cause: UART");
-            }
-            else if (wakeup_case & BIT(ESP_SLEEP_WAKEUP_BT))
-            {
-                ESP_LOGI(TAG, "Wakeup cause: Bluetooth");
-            }
-            else if (wakeup_case & BIT(ESP_SLEEP_WAKEUP_WIFI))
-            {
-                ESP_LOGI(TAG, "Wakeup cause: WiFi");
-            }
-            else if (wakeup_case & BIT(ESP_SLEEP_WAKEUP_ALL))
-            {
-                ESP_LOGI(TAG, "Wakeup cause: ALL");
-            }
-            else
-            {
-                ESP_LOGI(TAG, "Wakeup cause: UNDEFINED");
-            }
             ESP_LOGI(TAG, "INPUT frame: '%s'", buf);
             return 0;
         }
@@ -356,6 +327,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         }
         return ESP_OK;
     case BLE_GAP_EVENT_DISCONNECT:
+        active_conns--;
         if (active_conns < 0)
             active_conns = 0;
         ESP_LOGI(TAG, "Client disconnected; now %d connection(s)", active_conns);

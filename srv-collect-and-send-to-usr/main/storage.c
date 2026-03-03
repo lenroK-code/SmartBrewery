@@ -30,7 +30,7 @@ void storage_init(void)
     }
 }
 
-void storage_append(const char* path_to_file, const char *line)
+void storage_append(const char *path_to_file, const char *line)
 {
     if (s_log_mutex)
         xSemaphoreTake(s_log_mutex, portMAX_DELAY);
@@ -51,7 +51,7 @@ void storage_append(const char* path_to_file, const char *line)
         xSemaphoreGive(s_log_mutex);
 }
 
-FILE *storage_open_log_for_read(const char* path_to_file)
+FILE *storage_open_log_for_read(const char *path_to_file)
 {
     if (s_log_mutex)
         xSemaphoreTake(s_log_mutex, portMAX_DELAY);
@@ -67,12 +67,12 @@ void storage_close_log(FILE *f)
         xSemaphoreGive(s_log_mutex);
 }
 
-void storage_delete_log(const char* path_to_file)
+void storage_delete_log(const char *path_to_file)
 {
     remove(path_to_file);
 }
 
-void storage_dump_log_to_uart(const char* path_to_file)
+void storage_dump_log_to_uart(const char *path_to_file)
 {
     FILE *f = storage_open_log_for_read(path_to_file);
     if (!f)
