@@ -35,15 +35,14 @@ static const int normal_delay_ms = 5000;
 static const int cal_delay_ms = 10;
 
 const uint64_t uS_TO_S_FACTOR = 1000000ULL;
-// const uint64_t TIME_TO_SLEEP = 120; // how many seconds to sleep for
 const uint64_t TIME_TO_SLEEP = 60; // how many seconds to sleep for
 
 // static uint16_t notify_char_handle = 0;
 
 // SET THESE TWO VALUES TO MATCH YOUR SERVER:
-#define CMD_CHAR_HANDLE 0x0025        // handle CMD_CHAR na serwerze
-#define INPUT_CHAR_HANDLE 0x0014      // handle FILE_DATA_CHAR na serwerze
-#define CAL_NOTIFY_CHAR_HANDLE 0x0016 // handle FILE_DATA_CHAR na serwerze
+#define CMD_CHAR_HANDLE 0x0025        // CMD_CHAR handle on server
+#define INPUT_CHAR_HANDLE 0x0014      // FILE_DATA_CHAR handle on server
+#define CAL_NOTIFY_CHAR_HANDLE 0x0016 // FILE_DATA_CHAR handle on server
 
 static void parse_adv_name(const uint8_t *data, uint8_t length_data,
                            char *out_name, size_t out_len)
@@ -291,7 +290,7 @@ void app_main(void)
             int16_t accel_y = accel.accel_y;
             int16_t accel_z = accel.accel_z;
 
-            float temp = temp_read() - 4.5f; // read temperature from DS18B20 and apply correction of 4.5 degrees
+            float temp = temp_read(); // read temperature from DS18B20
 
             send_frame(accel_x, accel_y, accel_z, temp); // send data to server
             ESP_LOGI(TAG, "Temp: %.1f C", temp);

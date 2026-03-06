@@ -62,7 +62,7 @@ void load_calibration_from_nvs(void)
     esp_err_t ret = nvs_open("calibration", NVS_READONLY, &nvs);
     if (ret != ESP_OK)
     {
-        ESP_LOGI(TAG, "Brak kalibracji w NVS");
+        ESP_LOGI(TAG, "No calibration in NVS");
         return;
     }
 
@@ -124,7 +124,7 @@ void tilt_queue_push(float tilt)
 
 float measurement_get_average(void)
 {
-    // tu trzeba zaimplementować uśrednianie z tilt_queue - zobaczyc czy limity dzialaja czy nie
+    // averaging from tilt_queue should be implemented here - verify whether limits work as expected
     // if (tilt_queue.count < 10) return 0.0f;
 
     float sum = 0;
@@ -150,9 +150,9 @@ void measurement_add_sample(float tilt)
 
 void solve_linear_system(float A[][4], float b[], float X[], int n)
 {
-    float aug[6][5]; // [A|b] rozszerzona macierz
+    float aug[6][5]; // [A|b] augmented matrix
 
-    // Buduj rozszerzoną macierz [A|b]
+    // Build augmented matrix [A|b]
     for (int i = 0; i < n; i++)
     {
         for (int j = 0; j < 4; j++)
@@ -164,7 +164,7 @@ void solve_linear_system(float A[][4], float b[], float X[], int n)
                  i, aug[i][0], aug[i][1], aug[i][2], aug[i][3], aug[i][4]);
     }
 
-    // ELIMINACJA Gaussa
+    // Gauss elimination
     for (int p = 0; p < 4; p++)
     {
         // Pivot
@@ -180,7 +180,7 @@ void solve_linear_system(float A[][4], float b[], float X[], int n)
         }
         ESP_LOGD(TAG, "Pivot col %d: row %d = %.7f", p, maxr, aug[maxr][p]);
 
-        // Zamień wiersze
+        // Swap rows
         for (int j = 0; j < 5; j++)
         {
             float tmp = aug[p][j];
@@ -188,14 +188,14 @@ void solve_linear_system(float A[][4], float b[], float X[], int n)
             aug[maxr][j] = tmp;
         }
 
-        // Sprawdź singularność (ZAMIAST fabsf())
+        // Check singularity (INSTEAD OF fabsf())
         if (aug[p][p] > -1e-6f && aug[p][p] < 1e-6f)
         {
             ESP_LOGE(TAG, "Singular matrix at column %d!", p);
             return;
         }
 
-        // Eliminacja
+        // Elimination
         for (int i = p + 1; i < n; i++)
         {
             float alpha = aug[i][p] / aug[p][p];
@@ -256,18 +256,18 @@ void calculate_polynomial()
     ESP_LOGI(TAG, "A3=%.6f A2=%.6f A1=%.6f A0=%.6f",
              coeffs[0], coeffs[1], coeffs[2], coeffs[3]);
     save_calibration_to_nvs();
-    ESP_LOGI(TAG, "KALIBRACJA ZAPISANA do NVS!");
+    ESP_LOGI(TAG, "CALIBRATION SAVED to NVS!");
 }
 
 float calculate_tilt_from_accel(int ax_raw, int ay_raw, int az_raw)
 {
-    // Oficjalny wzór iSpindel
+    // Official iSpindel formula
     float scale = 1.0f / 16384.0f; // MPU6050 ±2g standard
     float ax = ax_raw * scale;
     float ay = ay_raw * scale;
     float az = az_raw * scale;
 
-    // Tilt = Ax/Az (iSpindel uproszczony)
+    // Tilt = Ax/Az (simplified iSpindel)
     float tilt = (az != 0.0f) ? (ax / az) * 57.3f : 0.0f;
 
     ESP_LOGD(TAG, "RAW:%.0f,%.0f,%.0f → NORM:%.3f,%.3f,%.3f → Tilt=%.2f°",
@@ -282,7 +282,7 @@ void calibrate_start(uint16_t conn_handle)
         cal_state = CAL_STATE_READY;
         cal_point = 0;
         calibrate_notify_start(conn_handle); // conn_handle to be set properly
-        ESP_LOGI(TAG, "CAL: START punkt %d/%d (SG=%.3f)",
+        ESP_LOGI(TAG, "CAL: START point %d/%d (SG=%.3f)",
                  cal_point + 1, CAL_POINTS_COUNT, sg_table[cal_point]);
     }
 }
@@ -294,7 +294,7 @@ void calibrate_module_start(void)
         cal_state = CAL_STATE_MEASURING;
         measuring = true;
         measurement_count = 0;
-        ESP_LOGI(TAG, "CAL: POMIAR %d/%d... (queue=%d)", cal_point + 1, CAL_POINTS_COUNT, tilt_queue.count);
+        ESP_LOGI(TAG, "CAL: MEASUREMENT %d/%d... (queue=%d)", cal_point + 1, CAL_POINTS_COUNT, tilt_queue.count);
     }
 }
 
@@ -302,9 +302,9 @@ void calibrate_module_stop(uint16_t conn_handle)
 {
     if (cal_state == CAL_STATE_MEASURING)
     {
-        float avg_tilt = measurement_get_average(); // *** uśrednij ***
+        float avg_tilt = measurement_get_average(); // *** average it ***
 
-        // ZAPIS PUNKTU
+        // SAVE POINT
         points[cal_point].reading = avg_tilt;
         points[cal_point].sg = sg_table[cal_point];
 
@@ -314,18 +314,18 @@ void calibrate_module_stop(uint16_t conn_handle)
             calculate_polynomial();
             cal_state = CAL_STATE_DONE;
             calibrate_notify_complete(conn_handle); // conn_handle to be set properly
-            ESP_LOGI(TAG, "CAL: KONIEC! Wielomian gotowy!");
+            ESP_LOGI(TAG, "CAL: DONE! Polynomial ready!");
         }
         else
         {
             cal_state = CAL_STATE_READY;
-            ESP_LOGI(TAG, "CAL: ZAPISANO %d/%d Tilt=%.2f SG=%.3f",
+            ESP_LOGI(TAG, "CAL: SAVED %d/%d Tilt=%.2f SG=%.3f",
                      cal_point, CAL_POINTS_COUNT, avg_tilt, sg_table[cal_point - 1]);
         }
     }
 }
 
-// Guards dla BLE
+// Guards for BLE
 bool calibrate_is_ready_for_module_start(void)
 {
     return cal_state == CAL_STATE_READY;

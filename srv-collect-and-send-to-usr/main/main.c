@@ -23,10 +23,7 @@
 #include "storage.h"
 #include "tcrt5000.h"
 #include "calibration.h"
-// #include "eink_driver.h"
 #include "eink.h"
-
-// void get_acceleremoter_from_buf(uint8_t*, size_t, int*);
 
 static const char *TAG = "NIMBLE_SERVER";
 
@@ -44,24 +41,6 @@ static const char *TAG = "NIMBLE_SERVER";
 static uint8_t own_addr_type;
 static FILE *s_file = NULL;
 static uint16_t conn_cal_handles[MAX_CONNS]; // per connection notify handles
-
-//-----------------------------------
-// DEBUG function: prints first N bytes of log file to ESP log
-// to be removed
-// static void snapshot_debug(void)
-// {
-//     FILE *f = fopen("/spiflash/current.csv", "r");
-//     if (!f) {
-//         ESP_LOGE(TAG, "DEBUG: cannot open current.csv");
-//         return;
-//     }
-//     char buf[64];
-//     size_t n = fread(buf, 1, sizeof(buf)-1, f);
-//     buf[n] = '\0';
-//     ESP_LOGI(TAG, "DEBUG: first %d bytes: \n%s", (int)n, buf);
-//     fclose(f);
-// }
-//-----------------------------------
 
 static void snapshot_open_for_read(void)
 {
@@ -456,21 +435,16 @@ void app_main(void)
 
     power_management_init();
 
-    // note for the future
-    // Standard FreeRTOS wakes up every "tick" (e.g., every 10ms) to increment the system clock and check for tasks.
-    // Without Tickless: The CPU wakes up 100 times a second even if doing nothing. This destroys power savings.
-    // With Tickless: If the next task is scheduled for 500ms from now, FreeRTOS stops the periodic tick interrupt, sets a hardware timer for 500ms, and goes to sleep for the entire duration. This is essential for "Modem Sleep" where the radio is off for specific intervals between Bluetooth events.
-
     storage_init();
     calibration_init();
 
     if (calibration_is_loaded())
     {
-        ESP_LOGI(TAG, "Kalibracja z NVS aktywna!");
+        ESP_LOGI(TAG, "Calibration from NVS is active!");
     }
     else
     {
-        ESP_LOGI(TAG, "Brak kalibracji - nowa");
+        ESP_LOGI(TAG, "No calibration found - starting new");
     }
 
     nimble_port_init();
@@ -491,7 +465,7 @@ void app_main(void)
 
     while (1)
     {
-        vTaskDelay(pdMS_TO_TICKS(1000)); // testowo co 1 s
+        vTaskDelay(pdMS_TO_TICKS(1000)); // test loop every 1 s
         // test calibration
         // float test_tilts[] = {-13.0f, -12.5f, 0.0f, 20.0f};
         // for (int i = 0; i < 4; i++)

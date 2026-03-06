@@ -7,14 +7,9 @@
 #include "onewire_bus.h"
 #include "ds18b20.h"
 
-
-// #define EXAMPLE_ONEWIRE_BUS_GPIO    4
-// #define EXAMPLE_ONEWIRE_MAX_DS18B20 1
-
 static const char *TAG = "DS18B20_Sensor";
 
-
-onewire_bus_handle_t bus ;
+onewire_bus_handle_t bus;
 int ds18b20_device_num = 0;
 ds18b20_device_handle_t ds18b20s[EXAMPLE_ONEWIRE_MAX_DS18B20];
 onewire_device_iter_handle_t iter = NULL;
@@ -30,8 +25,7 @@ esp_err_t temp_init(void)
         .bus_gpio_num = EXAMPLE_ONEWIRE_BUS_GPIO,
         .flags = {
             .en_pull_up = true, // enable the internal pull-up resistor in case the external device didn't have one
-        }
-    };
+        }};
     onewire_bus_rmt_config_t rmt_config = {
         .max_rx_bytes = 10, // 1byte ROM command + 8byte ROM number + 1byte device command
     };
@@ -43,21 +37,27 @@ esp_err_t temp_init(void)
     // create 1-wire device iterator, which is used for device search
     ESP_ERROR_CHECK(onewire_new_device_iter(bus, &iter));
     ESP_LOGI(TAG, "Device iterator created, start searching...");
-    do {
+    do
+    {
         search_result = onewire_device_iter_get_next(iter, &next_onewire_device);
-        if (search_result == ESP_OK) { // found a new device, let's check if we can upgrade it to a DS18B20
+        if (search_result == ESP_OK)
+        { // found a new device, let's check if we can upgrade it to a DS18B20
             ds18b20_config_t ds_cfg = {};
             onewire_device_address_t address;
             // check if the device is a DS18B20, if so, return the ds18b20 handle
-            if (ds18b20_new_device_from_enumeration(&next_onewire_device, &ds_cfg, &ds18b20s[ds18b20_device_num]) == ESP_OK) {
+            if (ds18b20_new_device_from_enumeration(&next_onewire_device, &ds_cfg, &ds18b20s[ds18b20_device_num]) == ESP_OK)
+            {
                 ds18b20_get_device_address(ds18b20s[ds18b20_device_num], &address);
                 ESP_LOGI(TAG, "Found a DS18B20[%d], address: %016llX", ds18b20_device_num, address);
                 ds18b20_device_num++;
-                if (ds18b20_device_num >= EXAMPLE_ONEWIRE_MAX_DS18B20) {
+                if (ds18b20_device_num >= EXAMPLE_ONEWIRE_MAX_DS18B20)
+                {
                     ESP_LOGI(TAG, "Max DS18B20 number reached, stop searching...");
                     break;
                 }
-            } else {
+            }
+            else
+            {
                 ESP_LOGI(TAG, "Found an unknown device, address: %016llX", next_onewire_device.address);
             }
         }
@@ -68,13 +68,14 @@ esp_err_t temp_init(void)
     return ESP_OK;
 }
 
-
-float temp_read(){
+float temp_read()
+{
     float temperature;
-        ESP_ERROR_CHECK(ds18b20_trigger_temperature_conversion_for_all(bus));
-        for (int i = 0; i < ds18b20_device_num; i ++) {
-            ESP_ERROR_CHECK(ds18b20_get_temperature(ds18b20s[i], &temperature));
-            ESP_LOGI(TAG, "temperature read from DS17B20[%d]: %.2fC", i, temperature);
-        }
+    ESP_ERROR_CHECK(ds18b20_trigger_temperature_conversion_for_all(bus));
+    for (int i = 0; i < ds18b20_device_num; i++)
+    {
+        ESP_ERROR_CHECK(ds18b20_get_temperature(ds18b20s[i], &temperature));
+        ESP_LOGI(TAG, "temperature read from DS17B20[%d]: %.2fC", i, temperature);
+    }
     return temperature;
 }

@@ -5,7 +5,7 @@
 #include "esp_log.h"
 #include "driver/gpio.h"
 
-#define TCRT5000_PIN GPIO_NUM_10 // Zmień na pin, do którego podłączony jest TCRT5000
+#define TCRT5000_PIN GPIO_NUM_10 // Change to the pin where TCRT5000 is connected
 static const char *TAG = "TCRT5000";
 
 esp_err_t tcrt5000_init()

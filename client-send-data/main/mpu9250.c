@@ -13,7 +13,7 @@ static i2c_master_dev_handle_t i2c_dev = NULL;
 esp_err_t mpu9250_init(void)
 {
 
-    // 1. Konfiguracja BUS (PINY W BUS_CONFIG!)
+    // 1. BUS configuration (pins in BUS_CONFIG!)
     i2c_master_bus_config_t bus_config = {
         .i2c_port = I2C_NUM_0,           // ← port number
         .sda_io_num = I2C_MASTER_SDA_IO, // ← SDA pin
@@ -28,12 +28,11 @@ esp_err_t mpu9250_init(void)
         },
     };
 
-
-    // 2. TWORZENIE BUS
+    // 2. CREATE BUS
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &i2c_bus));
     ESP_LOGI(TAG, "I2C bus created");
 
-    // 3. DODAWANIE URZĄDZENIA
+    // 3. ADD DEVICE
     i2c_device_config_t dev_config = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = MPU9250_ADDR,
@@ -53,24 +52,23 @@ esp_err_t mpu9250_init(void)
     cmd[0] = MPU9250_PWR_MGMT_1_REG;
     cmd[1] = 1 << MPU9250_RESET_BIT; // Bit 7
     ESP_ERROR_CHECK(i2c_master_transmit(i2c_dev, cmd, 2, 1000));
-        vTaskDelay(pdMS_TO_TICKS(100));  // Czekaj na reset
+    vTaskDelay(pdMS_TO_TICKS(100)); // Wait for reset
 
-
-    // Wake-up + wybierz zegar gyro Z
+    // Wake up + select gyro Z clock
     cmd[0] = MPU9250_PWR_MGMT_1_REG;
     cmd[1] = 0x00; // CLKSEL=0b000 (auto), SLEEP=0
     ESP_ERROR_CHECK(i2c_master_transmit(i2c_dev, cmd, 2, 1000));
-        vTaskDelay(pdMS_TO_TICKS(100));  // stabilizacja po wybudzeniu
+    vTaskDelay(pdMS_TO_TICKS(100)); // stabilization after wake-up
 
-    // KALIBRACJA AKCELEROMETRU ±2g
+    // ACCELEROMETER CALIBRATION ±2g
     cmd[0] = MPU9250_ACCEL_CONFIG_REG; // 0x1C
     cmd[1] = 0x00;                     // AFS_SEL=0 (±2g)
     ESP_ERROR_CHECK(i2c_master_transmit(i2c_dev, cmd, 2, 1000));
 
     ESP_LOGI(TAG, "MPU9250 calibrated ±2g");
-    // koniec kalibracji
+    // end of calibration
 
-    // 4. SPRAWDZENIE TOŻSAMOŚCI
+    // 4. IDENTITY CHECK
     uint8_t reg_addr = MPU9250_WHO_AM_I_REG;
     uint8_t who_am_i;
     esp_err_t ret = i2c_master_transmit_receive(i2c_dev, &reg_addr, 1, &who_am_i, 1, 1000);
@@ -111,12 +109,12 @@ esp_err_t read_accelerometer(mpu9250_accel_t *accel)
 
     // if (ret == ESP_OK)
     // {
-        accel->accel_x = (int16_t)(raw_data[0] << 8 | raw_data[1]);
-        accel->accel_y = (int16_t)(raw_data[2] << 8 | raw_data[3]);
-        accel->accel_z = (int16_t)(raw_data[4] << 8 | raw_data[5]);
-        ESP_LOGD(TAG, "Accel read: X=%d, Y=%d, Z=%d",
-                 accel->accel_x, accel->accel_y, accel->accel_z);
-        return ESP_OK;
+    accel->accel_x = (int16_t)(raw_data[0] << 8 | raw_data[1]);
+    accel->accel_y = (int16_t)(raw_data[2] << 8 | raw_data[3]);
+    accel->accel_z = (int16_t)(raw_data[4] << 8 | raw_data[5]);
+    ESP_LOGD(TAG, "Accel read: X=%d, Y=%d, Z=%d",
+             accel->accel_x, accel->accel_y, accel->accel_z);
+    return ESP_OK;
     // }
 
     accel->accel_x = accel->accel_y = accel->accel_z = 0;
